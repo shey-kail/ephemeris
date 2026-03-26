@@ -123,42 +123,6 @@ ephemeris = { git = "https://github.com/tyxk8160/ephemeris.git", branch = "maste
 
 更多使用方法参考[文档 ](https://docs.rs/rust-ephemeris/latest/rust_ephemeris/index.html) 
 
-
-
-**python用户**
-
-暂时项目没稳定，未添加到pypi中  
-
-
-
-- 编译
-
-  ```bash
-  cd <repo>/bindings/python
-  python setup.py build
-  ```
-
-- 基础使用
-
-  ```python
-  import ephemeris.ephemeris as eph
-  # 计算儒略日
-  print(eph.JulianDate(2023,7,23))
-  ```
-
- 更多用户参考rust文档
-
-## 文档
-
-- 生成文档
-
-```bash
-cargo doc --no-deps --open
-```
-- 在线文档
-
-https://docs.rs/rust-ephemeris/latest/rust_ephemeris/index.html
-
 ## FAQ
 
 - **Q**:  为什么会对天文历感兴趣
