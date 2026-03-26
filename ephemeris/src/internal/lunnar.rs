@@ -277,6 +277,87 @@ impl JulianDate {
 
         Self { jd: _jd }
     }
+
+    /// 从公历日期时间构造力学儒略日 (TT)
+    ///
+    /// 将格里高利历的年月日时分秒转换为力学时 (TT) 儒略日
+    /// 内部自动进行 UT1 → TT 的转换（使用 ΔT 修正）
+    ///
+    /// # Arguments
+    ///
+    /// - `year`: 年
+    /// - `month`: 月 (1-12)
+    /// - `day`: 日 (1-31)
+    /// - `hour`: 时 (0-23)
+    /// - `minute`: 分 (0-59)
+    /// - `second`: 秒 (0.0-60.0，支持闰秒)
+    ///
+    /// # Returns
+    ///
+    /// 返回力学时 (TT) 的儒略日
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use rust_ephemeris::JulianDate;
+    ///
+    /// // 2023 年 7 月 23 日 12:00:00 (UT1)
+    /// let jd_tt = JulianDate::from_ymdhms_tt(2023, 7, 23, 12, 0, 0.0);
+    /// println!("力学时儒略日：{}", jd_tt.jd);
+    /// ```
+    pub fn from_ymdhms_tt(
+        year: i32,
+        month: i32,
+        day: i32,
+        hour: i32,
+        minute: i32,
+        second: f64,
+    ) -> Self {
+        // 1. 将时分秒转为天的小数部分
+        let day_fraction =
+            (hour as f64) / 24.0 + (minute as f64) / 1440.0 + second / 86400.0;
+
+        // 2. 计算 UT1 儒略日
+        let jd_ut = Self::from_day(year, month, (day as f64) + day_fraction).jd;
+
+        // 3. UT1 → TT (加上 ΔT 修正)
+        // ΔT = TT - UT1，单位是儒略日
+        let t = jd_ut - constants::J2000;
+        let dt = math_utils::dt_t(t);
+        let jd_tt = jd_ut + dt;
+
+        Self { jd: jd_tt }
+    }
+
+    /// 从公历日期时间构造儒略日 (UT1)
+    ///
+    /// 将格里高利历的年月日时分秒转换为 UT1 儒略日
+    /// 不进行 ΔT 修正，适用于需要 UT1 时间的场景
+    ///
+    /// # Arguments
+    ///
+    /// - `year`: 年
+    /// - `month`: 月 (1-12)
+    /// - `day`: 日 (1-31)
+    /// - `hour`: 时 (0-23)
+    /// - `minute`: 分 (0-59)
+    /// - `second`: 秒 (0.0-60.0)
+    ///
+    /// # Returns
+    ///
+    /// 返回 UT1 儒略日
+    pub fn from_ymdhms_ut(
+        year: i32,
+        month: i32,
+        day: i32,
+        hour: i32,
+        minute: i32,
+        second: f64,
+    ) -> Self {
+        let day_fraction =
+            (hour as f64) / 24.0 + (minute as f64) / 1440.0 + second / 86400.0;
+        Self::from_day(year, month, (day as f64) + day_fraction)
+    }
 }
 
 #[test]
@@ -285,6 +366,22 @@ fn test_astoy() {
     println!("{:?}", d.jd);
     println!("{:?}", JulianDate::new(2460125.0));
     println!("{:?}", JulianDate::jd2day(2460125.0))
+}
+
+#[test]
+fn test_from_ymdhms_tt() {
+    // 测试 2023 年 7 月 23 日 12:00:00
+    let jd_tt = JulianDate::from_ymdhms_tt(2023, 7, 23, 12, 0, 0.0);
+    println!("2023-07-23 12:00:00 TT 儒略日：{}", jd_tt.jd);
+
+    // 测试 2000 年 1 月 1 日 12:00:00 (J2000 历元)
+    let jd_j2000 = JulianDate::from_ymdhms_tt(2000, 1, 1, 12, 0, 0.0);
+    println!("J2000 历元 TT 儒略日：{} (期望：2451545.0)", jd_j2000.jd);
+    assert!((jd_j2000.jd - 2451545.0).abs() < 0.001);
+
+    // 测试带时分秒的转换
+    let jd_with_time = JulianDate::from_ymdhms_tt(2024, 3, 14, 15, 30, 45.0);
+    println!("2024-03-14 15:30:45 TT 儒略日：{}", jd_with_time.jd);
 }
 
 pub fn calc(jd: f64, qs: &str) -> f64 {

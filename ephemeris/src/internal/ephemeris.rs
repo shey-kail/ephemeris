@@ -1,23 +1,14 @@
 use crate::internal::{ constants, math_utils::{ self, llr_conv, xyz2llr } };
 use std::f64::consts::PI;
 
-// 章动相关计算
-fn nutation2(t: f64) -> (f64, f64) {
-    let t2 = t * t;
-    let b = &constants::NUTATION_B;
-    let mut dl = 0.0;
-    let mut de = 0.0;
-
-    for i in (0..b.len()).step_by(5) {
-        let c = b[i] + b[i + 1] * t + b[i + 2] * t2;
-
-        let a = if i == 0 { -1.742 * t } else { 0.0 };
-
-        dl += (b[i + 3] + a) * c.sin();
-        de += b[i + 4] * c.cos();
-    }
-
-    (dl / 100.0 / constants::RAD, de / 100.0 / constants::RAD)
+// 章动相关计算 - 使用 IAU 2000A 模型
+pub fn nutation2(t: f64) -> (f64, f64) {
+    // t 是相对于 J2000 的儒略世纪数
+    // 转换为儒略日
+    let jd = t * 36525.0 + 2451545.0;
+    let (lon, lat) = super::nutation_iau2000a_impl::nutation_iau2000a(jd);
+    // 返回弧度
+    (lon, lat)
 }
 
 fn nutation_lon2(w: f64) -> f64 {
@@ -36,6 +27,10 @@ fn gxc_sun_lon(t: f64) -> f64 {
 fn gxc_moon_lon(_t: f64) -> f64 {
     -3.4e-6
 } //月球经度光行差
+
+fn gxc_moon_lat(t: f64) -> f64 {
+    (0.063 * (0.057 + 8433.4662 * t + 0.000064 * t * t).sin()) / constants::RAD
+} //月球纬度光行差
 
 #[test]
 fn test_nutation() {
@@ -251,9 +246,17 @@ fn eph_calc(xt: usize, zn: usize, t: f64, n: i32) -> f64 {
         };
 
         let mut c = 0.0;
-        for j in (n1..n_).step_by(3) {
-            c += f[j as usize] * (f[(j as usize) + 1] + t * f[(j as usize) + 2]).cos();
+        let n1_idx = n1 as usize;
+        let n_idx = n_ as usize;
+
+        // 使用 chunks_exact 遍历级数数据 (3个一组: A, B, C)
+        // 计算项: A * cos(B + t * C)
+        if let Some(chunk_slice) = f.get(n1_idx..n_idx) {
+            for chunk in chunk_slice.chunks_exact(3) {
+                c += chunk[0] * (chunk[1] + t * chunk[2]).cos();
+            }
         }
+        
         v += c * tn;
         tn *= t;
     }
@@ -334,13 +337,15 @@ fn xl1_calc(zn: usize, t: f64, n: i32) -> f64 {
     let n = if n < 0 { ob[0].len() } else { (n as usize) * 6 };
     for (i, f) in ob.iter().enumerate() {
         let mut c = 0.0;
-        let n = (((n as f64) * (f.len() as f64)) / (ob[0].len() as f64) + 0.5).floor() as usize;
-        let n = if i == 0 { n } else { n + 6 };
-        let n = if n >= f.len() { f.len() } else { n };
-        for j in (0..n).step_by(6) {
-            c +=
-                f[j] *
-                f64::cos(f[j + 1] + t * f[j + 2] + t2 * f[j + 3] + t3 * f[j + 4] + t4 * f[j + 5]);
+        let n_limit = (((n as f64) * (f.len() as f64)) / (ob[0].len() as f64) + 0.5).floor() as usize;
+        let n_limit = if i == 0 { n_limit } else { n_limit + 6 };
+        let n_limit = if n_limit >= f.len() { f.len() } else { n_limit };
+        
+        // 使用 chunks_exact 遍历级数数据 (6个一组)
+        if let Some(chunk_slice) = f.get(0..n_limit) {
+            for chunk in chunk_slice.chunks_exact(6) {
+                c += chunk[0] * (chunk[1] + t * chunk[2] + t2 * chunk[3] + t3 * chunk[4] + t4 * chunk[5]).cos();
+            }
         }
         v += c * tn;
         tn *= t;
@@ -448,7 +453,7 @@ pub fn obliquity(t: f64) -> f64 {
     let t3 = t2 * t;
     let t4 = t3 * t;
     let t5 = t4 * t;
-    (84381.406 - 46.836769 * t - 0.0001831 * t2 + 0.0020034 * t3 - 5.76e-7 * t4 - 4.34e-8 * t5) /
+    (84381.4060 - 46.836769 * t - 0.0001831 * t2 + 0.00200340 * t3 - 5.76e-7 * t4 - 4.34e-8 * t5) /
         constants::RAD
 }
 
@@ -461,7 +466,7 @@ fn pgst(t_: f64, dt: f64) -> f64 {
     let t4 = t3 * t;
     // let rad = PI / 180.0;
     let pi2 = 2.0 * PI;
-    pi2 * (0.779057273264 + 1.00273781191135448 * t_) +
+    pi2 * (0.7790572732640 + 1.00273781191135448 * t_) +
         (0.014506 + 4612.15739966 * t + 1.39667721 * t2 - 0.00009344 * t3 + 0.00001882 * t4) /
             constants::RAD
 }
@@ -656,7 +661,6 @@ pub fn compute_position(xt: usize, jd: f64, l: f64, fa: f64) ->
     if xt == 10 {
         //月亮
         //求光行时并精确求出地月距
-        a = e_coord(t, 15, 15, 15); //地球
         z = m_coord(t, 1, 1, -1);
         ra = z.2; //月亮
 
@@ -664,26 +668,19 @@ pub fn compute_position(xt: usize, jd: f64, l: f64, fa: f64) ->
         t -= (ra * constants::CS_AGX) / constants::CS_AU; //光行时计算
 
         //求视坐标
-        a2 = e_coord(t, 15, 15, 15); //地球
         z = m_coord(t, -1, -1, -1);
         rc = z.2; //月亮
 
-        //求光行距
-        a2 = h2g(a, a2);
-        a2.2 *= constants::CS_AU;
-        z2 = h2g(z, a2);
-        rb = z2.2;
-
         //地心黄道及地心赤道
-        
-        z.0 = math_utils::rad2mrad(z.0 + d_l);
+        z.0 = math_utils::rad2mrad(z.0 + gxc_moon_lon(t) + d_l);
+        z.1 += gxc_moon_lat(t);
         a_lon_ = z.0;
         a_lat_ = z.1;
         d_e_ = ra;
         z = llr_conv(z, e); //转到赤道坐标
         a_ra_ = z.0;
         a_dec_ =z.1;
-        lt_ = rb;
+        lt_ = rc; // 光行距使用地月距
     }
     if xt < 10 {
         //行星和太阳
@@ -703,11 +700,18 @@ pub fn compute_position(xt: usize, jd: f64, l: f64, fa: f64) ->
         //重算坐标
         a2 = p_coord(0, t, -1, -1, -1); //地球
         z2 = p_coord(xt, t, -1, -1, -1); //行星
-        z = h2g(z2, a);
-        rb = z.2; //rb光行距（在惯性系中看）
         z = h2g(z2, a2);
-        rc = z.2; //rc视距
+        rb = z.2; //rb光行距（在惯性系中看）
+        
+        // 修正视距计算：使用原始时刻地球 a，和光行时时刻行星 z2
+        rc = rb;
+        z = h2g(z2, a2); // 这里保留 z 的 LL 转换用于后续计算
         z.0 = math_utils::rad2mrad(z.0 + d_l); //补章动
+
+        // 太阳光行差修正
+        if xt == 9 {
+            z.0 = math_utils::rad2mrad(z.0 + gxc_sun_lon(t));
+        }
 
         a_lon_ = z.0;
         a_lat_ = z.1;

@@ -80,6 +80,10 @@ pub struct PlanetCoordinates {
     pub alt: f64, // 高度角
     pub sid_time: (f64, f64), // 恒星时, 真、平
     pub body: CelestialBody, //星体
+    
+    // 瞬时速度（弧度/日）
+    pub v_eclon: f64, // 黄经速度
+    pub v_d_e: f64,   // 地心距速度
 }
 
 impl std::fmt::Display for PlanetCoordinates {
@@ -169,15 +173,13 @@ impl std::fmt::Display for PlanetCoordinates {
 /// ```
 pub fn calculate_celestial_body(
     body: CelestialBody,
-    jd: f64,
-    tz: f64,
+    jd_tt: f64,  // TT 儒略日
+    _tz: f64,     // 保留参数以兼容旧接口，但不使用
     lon: f64,
     lat: f64
 ) -> PlanetCoordinates {
-    let mut jd = jd - constants::J2000;
-
-    jd = jd + tz / 24.0 + math_utils::dt_t(jd); // 转为标准力学时
-    println!("xt:{} , jd:{}, l:{}, fa:{}", body as usize, jd, lon, lat);
+    // jd_tt 已经是 TT 时间，直接转换为相对于 J2000 的天数
+    let jd = jd_tt - constants::J2000;
 
     let (
         eclon_,
@@ -197,6 +199,38 @@ pub fn calculate_celestial_body(
         sid_time_,
     ) = compute_position(body as usize, jd, lon, lat);
 
+    // 使用数值微分计算瞬时速度（弧度/日）
+    // 采用二阶拉格朗日差分法（类似 Swiss Ephemeris）
+    let dt = if body == CelestialBody::Moon { 0.00005 } else { 0.0001 }; // 时间间隔（儒略日）
+    
+    // 返回值顺序：(eclon, eclat, a_lon, a_lat, a_ra, a_dec, r, d_e, lt, st_ra, st_dec, dist, az, alt, sid_time)
+    let (
+        eclon_0, _, a_lon_0, _, _, _, _, d_e_0, _, _, _, _, _, _, _,
+    ) = compute_position(body as usize, jd - dt, lon, lat);
+    let (
+        eclon_1, _, a_lon_1, _, _, _, _, d_e_1, _, _, _, _, _, _, _,
+    ) = compute_position(body as usize, jd, lon, lat);
+    let (
+        eclon_2, _, a_lon_2, _, _, _, _, d_e_2, _, _, _, _, _, _, _,
+    ) = compute_position(body as usize, jd + dt, lon, lat);
+    
+    // 使用中心差分计算速度：v = (x2 - x0) / (2 * dt)
+    // 所有行星都使用视黄经速度（与 swetest 一致）
+    // 需要处理角度跨越 360° 边界的情况
+    let a_lon_diff = {
+        let mut diff = a_lon_2 - a_lon_0;
+        // 归一化到 -π 到 π 之间
+        while diff > std::f64::consts::PI {
+            diff -= 2.0 * std::f64::consts::PI;
+        }
+        while diff < -std::f64::consts::PI {
+            diff += 2.0 * std::f64::consts::PI;
+        }
+        diff
+    };
+    let v_eclon_ = a_lon_diff / (2.0 * dt);
+    let v_d_e_ = (d_e_2 - d_e_0) / (2.0 * dt);
+
     let pos = PlanetCoordinates {
         body: body,
         eclon: eclon_,
@@ -214,6 +248,8 @@ pub fn calculate_celestial_body(
         az: az_,
         alt: alt_,
         sid_time: sid_time_,
+        v_eclon: v_eclon_,
+        v_d_e: v_d_e_,
     };
     pos
 }
