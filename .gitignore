@@ -51,3 +51,6 @@ lib/generated_bridge.dart
 .devcontainer/.*
 # build cache in examples
 examples/**/target/
+# pixi environments
+.pixi/*
+!.pixi/config.toml

@@ -1,6 +1,5 @@
 [workspace]
 members = [
-    "bingdings/python",
-    "bingdings/wasm",
-    "ephemeris"
+    "ephemeris",
+    "ephemeris-cli",
 ]
