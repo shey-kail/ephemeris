@@ -1,3 +1,6 @@
+ephe/
+bsp/
+swisseph/
 /build
 /target
 .vscode
