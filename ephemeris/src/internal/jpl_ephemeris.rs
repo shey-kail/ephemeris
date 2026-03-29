@@ -442,13 +442,19 @@ impl JplEphemeris {
             app_lon += aberration_lon;
         }
         
-        // 3. 章动修正
+        // 3. 章动修正（使用完整的 IAU 2000A 模型）
         if apply_nutation {
             use crate::internal::nutation_iau2000a_impl::nutation_iau2000a;
-            let (dpsi, _depsilon) = nutation_iau2000a(jd_tdb);
             
-            // 黄经章动修正（简化）
-            app_lon += dpsi * std::f64::consts::PI / (180.0 * 3600.0);
+            // 计算完整的 IAU 2000A 章动
+            let (dpsi, depsilon) = nutation_iau2000a(jd_tdb);
+            
+            // 黄经章动修正
+            // dpsi 已经是弧度制的黄经章动
+            app_lon += dpsi;
+            
+            // 黄纬章动修正（通常很小，但为了完整性也加上）
+            app_lat += depsilon;
         }
         
         Ok(ApparentPlanetPosition {
