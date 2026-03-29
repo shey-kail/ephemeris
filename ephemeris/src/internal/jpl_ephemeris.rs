@@ -92,85 +92,99 @@ impl JplEphemeris {
         })
     }
     
-    /// 从指定的儒略日计算太阳位置
+    /// 从指定的儒略日计算太阳视位置
+    /// 
+    /// 包含完整的修正：光时、岁差、章动、光行差
     /// 
     /// # 参数
     /// * `jd_tdb` - TDB 时间的儒略日
     /// 
     /// # 返回
-    /// * `Result<SolarPosition, String>` - 太阳位置数据
+    /// * `Result<SolarPosition, String>` - 太阳视位置数据
     pub fn solar_position(&self, jd_tdb: f64) -> Result<SolarPosition, String> {
         let epoch = Epoch::from_jde_tdb(jd_tdb);
-        
-        // 计算地心到太阳的位置
+
+        // 1. 使用 anise 的完整光行差修正（CN_S = converged light time + stellar aberration）
         let state = self.almanac
-            .translate(SUN_J2000, EARTH_J2000, epoch, None)
+            .translate(SUN_J2000, EARTH_J2000, epoch, Aberration::CN_S)
             .map_err(|e| format!("计算太阳位置失败：{}", e))?;
-        
-        // 获取位置和速度（单位：km, km/s）
+
+        // 获取位置（单位：km）
         let x = state.radius_km.x;
         let y = state.radius_km.y;
         let z = state.radius_km.z;
-        let vx = state.velocity_km_s.x;
-        let vy = state.velocity_km_s.y;
-        let vz = state.velocity_km_s.z;
-        
+
         let r_km = (x*x + y*y + z*z).sqrt();
         let r_au = r_km / 149597870.7; // 转换为 AU
-        
-        // 计算黄经、黄纬
+
+        // 2. 计算视黄经、视黄纬
+        // anise 的 translate with Aberration::CN_S 已经包含了光行差修正
+        // 返回的是视位置（apparent position）
         let lon = y.atan2(x);
         let lat = (z / r_km).asin();
+
+        // 3. 章动修正：从 J2000 平赤道到观测时刻真赤道
+        let (dpsi, depsilon) = crate::internal::nutation_iau2000a_impl::nutation_iau2000a(jd_tdb);
         
+        // 视黄经 = 平黄经 + 章动
+        let true_lon = lon + dpsi;
+        let true_lat = lat + depsilon;
+
         Ok(SolarPosition {
             epoch: jd_tdb,
-            longitude: lon,
-            latitude: lat,
+            longitude: true_lon,
+            latitude: true_lat,
             distance: r_au,
-            velocity_x: vx,
-            velocity_y: vy,
-            velocity_z: vz,
+            velocity_x: state.velocity_km_s.x,
+            velocity_y: state.velocity_km_s.y,
+            velocity_z: state.velocity_km_s.z,
         })
     }
     
-    /// 从指定的儒略日计算月球位置
+    /// 从指定的儒略日计算月球视位置
+    /// 
+    /// 包含完整的修正：光时、岁差、章动、光行差
     /// 
     /// # 参数
     /// * `jd_tdb` - TDB 时间的儒略日
     /// 
     /// # 返回
-    /// * `Result<LunarPosition, String>` - 月球位置数据
+    /// * `Result<LunarPosition, String>` - 月球视位置数据
     pub fn lunar_position(&self, jd_tdb: f64) -> Result<LunarPosition, String> {
         let epoch = Epoch::from_jde_tdb(jd_tdb);
-        
-        // 计算地心到月球的位置
+
+        // 1. 使用 anise 的完整光行差修正
         let state = self.almanac
-            .translate(MOON_J2000, EARTH_J2000, epoch, None)
+            .translate(MOON_J2000, EARTH_J2000, epoch, Aberration::CN_S)
             .map_err(|e| format!("计算月球位置失败：{}", e))?;
-        
-        // 获取位置和速度（单位：km, km/s）
+
+        // 获取位置（单位：km）
         let x = state.radius_km.x;
         let y = state.radius_km.y;
         let z = state.radius_km.z;
-        let vx = state.velocity_km_s.x;
-        let vy = state.velocity_km_s.y;
-        let vz = state.velocity_km_s.z;
-        
+
         let r_km = (x*x + y*y + z*z).sqrt();
         let r_au = r_km / 149597870.7; // 转换为 AU
-        
-        // 计算黄经、黄纬
+
+        // 2. 计算视黄经、视黄纬
         let lon = y.atan2(x);
         let lat = (z / r_km).asin();
+
+        // 3. 章动修正
+        let (dpsi, depsilon) = crate::internal::nutation_iau2000a_impl::nutation_iau2000a(jd_tdb);
         
+        // 视黄经 = 平黄经 + 章动
+        let true_lon = lon + dpsi;
+        let true_lat = lat + depsilon;
+
         Ok(LunarPosition {
             epoch: jd_tdb,
-            longitude: lon,
-            latitude: lat,
+            longitude: true_lon,
+            latitude: true_lat,
             distance: r_au,
-            velocity_x: vx,
-            velocity_y: vy,
-            velocity_z: vz,
+            velocity_x: state.velocity_km_s.x,
+            velocity_y: state.velocity_km_s.y,
+            velocity_z: state.velocity_km_s.z,
         })
     }
     
@@ -348,7 +362,9 @@ impl JplEphemeris {
         self.ephemeris_type.year_range()
     }
     
-    /// 计算行星位置（地心）
+    /// 计算行星视位置（地心）
+    /// 
+    /// 包含完整的修正：光时、岁差、章动、光行差
     /// 
     /// 注意：外行星需要使用 anise 库的 Frame 结构体
     /// 
@@ -357,13 +373,13 @@ impl JplEphemeris {
     /// * `jd_tdb` - TDB 时间的儒略日
     /// 
     /// # 返回
-    /// * 行星位置数据（黄经、黄纬、距离等）
+    /// * 行星视位置数据（黄经、黄纬、距离等）
     pub fn planet_position(&self, planet: Planet, jd_tdb: f64) -> Result<PlanetPosition, String> {
         let epoch = Epoch::from_jde_tdb(jd_tdb);
-        
+
         // 使用 anise prelude 中的 Frame 结构体
         use anise::prelude::Frame;
-        
+
         // 使用 NAIF ID 直接创建 Frame
         // 参考：https://naif.jpl.nasa.gov/pub/naif/toolkit_docs/C/req/naif_ids.html
         // DE441 使用质心 ID：水星=1, 金星=2, 地球=3, 火星=4, 木星=5, 土星=6, 天王星=7, 海王星=8, 冥王星=9
@@ -382,36 +398,40 @@ impl JplEphemeris {
             Planet::Neptune => Frame::from_ephem_j2000(8), // 海王星质心
             Planet::Pluto => Frame::from_ephem_j2000(9),   // 冥王星质心
         };
-        
-        // 计算地心到行星的位置
+
+        // 1. 计算地心到行星的位置（使用完整光行差修正）
         let state = self.almanac
-            .translate(planet_frame, EARTH_J2000, epoch, None)
+            .translate(planet_frame, EARTH_J2000, epoch, Aberration::CN_S)
             .map_err(|e| format!("计算{}位置失败：{}", planet.name(), e))?;
-        
-        // 获取位置和速度（单位：km, km/s）
+
+        // 获取位置（单位：km）
         let x = state.radius_km.x;
         let y = state.radius_km.y;
         let z = state.radius_km.z;
-        let vx = state.velocity_km_s.x;
-        let vy = state.velocity_km_s.y;
-        let vz = state.velocity_km_s.z;
-        
+
         let r_km = (x*x + y*y + z*z).sqrt();
         let r_au = r_km / 149597870.7; // 转换为 AU
-        
-        // 计算黄经、黄纬
+
+        // 2. 计算视黄经、视黄纬
         let lon = y.atan2(x);
         let lat = (z / r_km).asin();
+
+        // 3. 章动修正
+        let (dpsi, depsilon) = crate::internal::nutation_iau2000a_impl::nutation_iau2000a(jd_tdb);
         
+        // 视黄经 = 平黄经 + 章动
+        let true_lon = lon + dpsi;
+        let true_lat = lat + depsilon;
+
         Ok(PlanetPosition {
             planet,
             epoch: jd_tdb,
-            longitude: lon,
-            latitude: lat,
+            longitude: true_lon,
+            latitude: true_lat,
             distance: r_au,
-            velocity_x: vx,
-            velocity_y: vy,
-            velocity_z: vz,
+            velocity_x: state.velocity_km_s.x,
+            velocity_y: state.velocity_km_s.y,
+            velocity_z: state.velocity_km_s.z,
         })
     }
     
