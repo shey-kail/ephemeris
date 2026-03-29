@@ -9,5 +9,6 @@ pub mod corrections;
 pub mod calibration;
 pub mod jpl_ephemeris;
 pub mod mode;
+pub mod planet;
 
 

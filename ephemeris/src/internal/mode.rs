@@ -5,6 +5,7 @@
 // 2. 精准模式 - 使用 JPL DE 历表，速度较慢，精度 < 0.1 秒
 
 use crate::internal::jpl_ephemeris::{JplEphemeris, JplEphemerisType};
+use crate::internal::planet::Planet;
 use std::sync::Arc;
 
 /// 太阳位置结果（统一返回类型）
@@ -456,6 +457,98 @@ impl EphemerisCalculator {
             }
         }
     }
+    
+    // ==================== 行星位置计算 ====================
+    
+    /// 计算行星位置
+    /// 
+    /// # 参数
+    /// * `planet` - 行星
+    /// * `jd_tdb` - TDB 时间的儒略日
+    /// 
+    /// # 返回
+    /// * 行星位置数据
+    pub fn planet_position(&self, planet: Planet, jd_tdb: f64) -> Result<PlanetPositionResult, String> {
+        match &self.config.mode {
+            CalculationMode::Simple => {
+                // 简单模式：使用近似算法（暂不实现）
+                Err(format!("简单模式暂不支持{}的位置计算", planet.name()))
+            }
+            CalculationMode::Precise { .. } => {
+                // 精准模式：使用 JPL 历表
+                if let Some(ep) = &self.jpl_ephemeris {
+                    let jpl_pos = ep.planet_position(planet, jd_tdb)?;
+                    Ok(PlanetPositionResult::Precise(jpl_pos))
+                } else {
+                    Err("精准模式未初始化".to_string())
+                }
+            }
+        }
+    }
+    
+    /// 计算行星视位置（含光行差、章动修正）
+    /// 
+    /// # 参数
+    /// * `planet` - 行星
+    /// * `jd_tdb` - TDB 时间的儒略日
+    /// * `apply_aberration` - 是否应用光行差修正
+    /// * `apply_nutation` - 是否应用章动修正
+    /// 
+    /// # 返回
+    /// * 行星视位置数据
+    pub fn planet_apparent_position(
+        &self,
+        planet: Planet,
+        jd_tdb: f64,
+        apply_aberration: bool,
+        apply_nutation: bool,
+    ) -> Result<ApparentPlanetPositionResult, String> {
+        match &self.config.mode {
+            CalculationMode::Simple => {
+                // 简单模式：使用近似算法（暂不实现）
+                Err(format!("简单模式暂不支持{}的视位置计算", planet.name()))
+            }
+            CalculationMode::Precise { .. } => {
+                // 精准模式：使用 JPL 历表
+                if let Some(ep) = &self.jpl_ephemeris {
+                    let pos = ep.planet_apparent_position(planet, jd_tdb, apply_aberration, apply_nutation)?;
+                    Ok(ApparentPlanetPositionResult::Precise(pos))
+                } else {
+                    Err("精准模式未初始化".to_string())
+                }
+            }
+        }
+    }
+    
+    /// 计算行星视黄经
+    /// 
+    /// # 参数
+    /// * `planet` - 行星
+    /// * `jd_tdb` - TDB 时间的儒略日
+    /// 
+    /// # 返回
+    /// * 视黄经（度）
+    pub fn planet_apparent_longitude(&self, planet: Planet, jd_tdb: f64) -> Result<f64, String> {
+        let pos = self.planet_apparent_position(planet, jd_tdb, true, true)?;
+        match pos {
+            ApparentPlanetPositionResult::Precise(p) => Ok(p.apparent_longitude_deg()),
+            _ => Err("未知模式".to_string()),
+        }
+    }
+}
+
+/// 行星位置结果（统一返回类型）
+#[derive(Debug, Clone)]
+pub enum PlanetPositionResult {
+    /// 精准模式结果
+    Precise(crate::internal::jpl_ephemeris::PlanetPosition),
+}
+
+/// 行星视位置结果（统一返回类型）
+#[derive(Debug, Clone)]
+pub enum ApparentPlanetPositionResult {
+    /// 精准模式结果
+    Precise(crate::internal::jpl_ephemeris::ApparentPlanetPosition),
 }
 
 #[cfg(test)]
