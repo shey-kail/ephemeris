@@ -416,30 +416,47 @@ impl JplEphemeris {
         apply_aberration: bool,
         apply_nutation: bool,
     ) -> Result<ApparentPlanetPosition, String> {
-        // 1. 计算几何位置
-        let geo_pos = self.planet_position(planet, jd_tdb)?;
+        let epoch = Epoch::from_jde_tdb(jd_tdb);
         
-        let mut app_lon = geo_pos.longitude;
-        let mut app_lat = geo_pos.latitude;
+        // 使用 anise 的 Frame 常量
+        let planet_frame = match planet {
+            Planet::Mercury => anise::constants::frames::MERCURY_J2000,
+            Planet::Venus => anise::constants::frames::VENUS_J2000,
+            Planet::Moon => anise::constants::frames::MOON_J2000,
+            Planet::Sun => anise::constants::frames::SUN_J2000,
+            Planet::Earth => EARTH_J2000,
+            Planet::Mars | Planet::Jupiter | Planet::Saturn | Planet::Uranus | Planet::Neptune | Planet::Pluto => {
+                return Err(format!("{} 的 Frame 常量在 anise 0.9.6 中未定义", planet.name()));
+            }
+        };
         
-        // 2. 光行差修正（周年光行差）
+        // 1. 计算几何位置（不含光行差）
+        let geo_state = self.almanac
+            .translate(planet_frame, EARTH_J2000, epoch, Aberration::NONE)
+            .map_err(|e| format!("计算{}位置失败：{}", planet.name(), e))?;
+        
+        let x = geo_state.radius_km.x;
+        let y = geo_state.radius_km.y;
+        let z = geo_state.radius_km.z;
+        let r_km = (x*x + y*y + z*z).sqrt();
+        let r_au = r_km / 149597870.7;
+        
+        let mut app_lon = y.atan2(x);
+        let mut app_lat = (z / r_km).asin();
+        
+        // 2. 光行差修正（使用 anise 的完整模型）
         if apply_aberration && planet != Planet::Sun {
-            // 计算地球速度
-            let earth_state = self.almanac
-                .translate(EARTH_J2000, SUN_J2000, Epoch::from_jde_tdb(jd_tdb), None)
-                .map_err(|e| format!("计算地球速度失败：{}", e))?;
+            // 使用 anise 的 converged light time + stellar aberration
+            let app_state = self.almanac
+                .translate(planet_frame, EARTH_J2000, epoch, Aberration::CN_S)
+                .map_err(|e| format!("计算{}视位置失败：{}", planet.name(), e))?;
             
-            let v_earth_x = earth_state.velocity_km_s.x;
-            let v_earth_y = earth_state.velocity_km_s.y;
+            let app_x = app_state.radius_km.x;
+            let app_y = app_state.radius_km.y;
+            let app_z = app_state.radius_km.z;
             
-            // 光行差常数（约 20.49552 角秒）
-            let kappa = 20.49552 / 3600.0 * std::f64::consts::PI / 180.0;
-            let c = 299792.458; // 光速 km/s
-            let v_earth = (v_earth_x * v_earth_x + v_earth_y * v_earth_y).sqrt();
-            
-            // 简化光行差修正
-            let aberration_lon = kappa * (v_earth / c) * geo_pos.longitude.sin();
-            app_lon += aberration_lon;
+            app_lon = app_y.atan2(app_x);
+            app_lat = (app_z / r_km).asin();
         }
         
         // 3. 章动修正（使用完整的 IAU 2000A 模型）
@@ -450,21 +467,20 @@ impl JplEphemeris {
             let (dpsi, depsilon) = nutation_iau2000a(jd_tdb);
             
             // 黄经章动修正
-            // dpsi 已经是弧度制的黄经章动
             app_lon += dpsi;
             
-            // 黄纬章动修正（通常很小，但为了完整性也加上）
+            // 黄纬章动修正
             app_lat += depsilon;
         }
         
         Ok(ApparentPlanetPosition {
             planet,
             epoch: jd_tdb,
-            geometric_longitude: geo_pos.longitude,
-            geometric_latitude: geo_pos.latitude,
+            geometric_longitude: app_lon,
+            geometric_latitude: app_lat,
             apparent_longitude: app_lon,
             apparent_latitude: app_lat,
-            distance: geo_pos.distance,
+            distance: r_au,
         })
     }
 }
