@@ -20,19 +20,27 @@ pub enum JplEphemerisType {
     DE431,
     /// DE441 - 适用于 -13000 年到 +17000 年，改进的月球历表
     DE441,
+    /// DE441 精简版 - 适用于 -3000 年到 +3000 年（文件更小）
+    DE441Lite,
 }
 
 impl JplEphemerisType {
-    /// 获取历表文件路径
-    pub fn file_paths(&self) -> Vec<&'static str> {
+    /// 获取历表文件路径（使用绝对路径）
+    pub fn file_paths(&self) -> Vec<String> {
+        // 获取项目根目录
+        let workspace_root = env!("CARGO_MANIFEST_DIR").to_string() + "/..";
+        
         match self {
             JplEphemerisType::DE431 => vec![
-                "bsp/431/de431_part-1.bsp",
-                "bsp/431/de431_part-2.bsp",
+                workspace_root.clone() + "/bsp/431/de431_part-1.bsp",
+                workspace_root.clone() + "/bsp/431/de431_part-2.bsp",
             ],
             JplEphemerisType::DE441 => vec![
-                "bsp/441/de441_part-1.bsp",
-                "bsp/441/de441_part-2.bsp",
+                workspace_root.clone() + "/bsp/441/de441_part-1.bsp",
+                workspace_root.clone() + "/bsp/441/de441_part-2.bsp",
+            ],
+            JplEphemerisType::DE441Lite => vec![
+                workspace_root + "/bsp/441/de441_3000bc_3000ad.bsp",
             ],
         }
     }
@@ -42,6 +50,7 @@ impl JplEphemerisType {
         match self {
             JplEphemerisType::DE431 => (-13000, 17000),
             JplEphemerisType::DE441 => (-13000, 17000),
+            JplEphemerisType::DE441Lite => (-3000, 3000),
         }
     }
 }
@@ -68,11 +77,11 @@ impl JplEphemeris {
         
         // 加载所有历表文件
         for path in ephemeris_type.file_paths() {
-            if !Path::new(path).exists() {
+            if !Path::new(&path).exists() {
                 return Err(format!("历表文件不存在：{}", path));
             }
             
-            let spk = SPK::load(path)
+            let spk = SPK::load(&path)
                 .map_err(|e| format!("加载历表文件 {} 失败：{}", path, e))?;
             almanac = almanac.with_spk(spk);
         }
@@ -341,7 +350,7 @@ impl JplEphemeris {
     
     /// 计算行星位置（地心）
     /// 
-    /// 注意：由于 anise 库的限制，目前仅支持内行星（水、金、火、木、土）
+    /// 注意：外行星需要使用 anise 库的 Frame 结构体
     /// 
     /// # 参数
     /// * `planet` - 行星
@@ -352,19 +361,26 @@ impl JplEphemeris {
     pub fn planet_position(&self, planet: Planet, jd_tdb: f64) -> Result<PlanetPosition, String> {
         let epoch = Epoch::from_jde_tdb(jd_tdb);
         
-        // 使用 anise 预定义的 Frame 常量
-        // 注意：anise 0.9.6 只定义了内行星的 Frame
+        // 使用 anise prelude 中的 Frame 结构体
+        use anise::prelude::Frame;
+        
+        // 使用 NAIF ID 直接创建 Frame
+        // 参考：https://naif.jpl.nasa.gov/pub/naif/toolkit_docs/C/req/naif_ids.html
+        // DE441 使用质心 ID：水星=1, 金星=2, 地球=3, 火星=4, 木星=5, 土星=6, 天王星=7, 海王星=8, 冥王星=9
         let planet_frame = match planet {
+            // 内行星使用预定义常量
             Planet::Mercury => anise::constants::frames::MERCURY_J2000,
             Planet::Venus => anise::constants::frames::VENUS_J2000,
             Planet::Moon => anise::constants::frames::MOON_J2000,
             Planet::Sun => anise::constants::frames::SUN_J2000,
             Planet::Earth => EARTH_J2000,
-            // 外行星需要使用 SPK 的 NAIF ID，但 anise 0.9.6 不支持动态创建 Frame
-            // 暂时返回错误
-            Planet::Mars | Planet::Jupiter | Planet::Saturn | Planet::Uranus | Planet::Neptune | Planet::Pluto => {
-                return Err(format!("{} 的 Frame 常量在 anise 0.9.6 中未定义，请使用未来的 anise 版本或自行加载 FK 文件", planet.name()));
-            }
+            // 外行星使用质心 NAIF ID 创建 Frame
+            Planet::Mars => Frame::from_ephem_j2000(4),    // 火星质心
+            Planet::Jupiter => Frame::from_ephem_j2000(5), // 木星质心
+            Planet::Saturn => Frame::from_ephem_j2000(6),  // 土星质心
+            Planet::Uranus => Frame::from_ephem_j2000(7),  // 天王星质心
+            Planet::Neptune => Frame::from_ephem_j2000(8), // 海王星质心
+            Planet::Pluto => Frame::from_ephem_j2000(9),   // 冥王星质心
         };
         
         // 计算地心到行星的位置
