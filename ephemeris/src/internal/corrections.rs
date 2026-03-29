@@ -441,11 +441,22 @@ pub fn precession_vondrak_2011(tjd: f64) -> [[f64; 3]; 3] {
     let w = eqx.iter().map(|v| v*v).sum::<f64>().sqrt();
     eqx.iter_mut().for_each(|v| *v /= w);
     
-    // 旋转矩阵：行向量为 [春分点，赤道极，黄道极]
+    // 构建旋转矩阵：行向量为 [X, Y, Z] 基向量
+    // X 轴指向观测时刻的春分点
+    // Z 轴指向观测时刻的黄道极
+    // Y 轴 = Z x X，完成右手系
+    let x_axis = eqx;
+    let z_axis = pecl;
+    let y_axis = [
+        z_axis[1] * x_axis[2] - z_axis[2] * x_axis[1],
+        z_axis[2] * x_axis[0] - z_axis[0] * x_axis[2],
+        z_axis[0] * x_axis[1] - z_axis[1] * x_axis[0],
+    ];
+
     [
-        [eqx[0], eqx[1], eqx[2]],
-        [-pequ[0], -pequ[1], -pequ[2]],
-        [pecl[0], pecl[1], pecl[2]],
+        [x_axis[0], x_axis[1], x_axis[2]],
+        [y_axis[0], y_axis[1], y_axis[2]],
+        [z_axis[0], z_axis[1], z_axis[2]],
     ]
 }
 
@@ -527,16 +538,16 @@ pub fn apply_precession_iau2006(
     pos: Cartesian,
     t: f64,
 ) -> Cartesian {
-    let (zeta, z, theta) = precession_iau2006(t);
+    let (zeta, z_angle, theta) = precession_iau2006(t);
 
     // 第一步：Rz(-zeta)
-    let (x, y, z) = pos;
+    let (x, y, z_coord) = pos;
     let cos_zeta = zeta.cos();
     let sin_zeta = zeta.sin();
     let (x1, y1, z1) = (
         x * cos_zeta + y * sin_zeta,
         -x * sin_zeta + y * cos_zeta,
-        z,
+        z_coord,
     );
 
     // 第二步：Ry(theta)
@@ -549,8 +560,8 @@ pub fn apply_precession_iau2006(
     );
 
     // 第三步：Rz(-z)
-    let cos_z_rot = z.cos();
-    let sin_z_rot = z.sin();
+    let cos_z_rot = z_angle.cos();
+    let sin_z_rot = z_angle.sin();
     let (x3, y3, z3) = (
         x2 * cos_z_rot + y2 * sin_z_rot,
         -x2 * sin_z_rot + y2 * cos_z_rot,
