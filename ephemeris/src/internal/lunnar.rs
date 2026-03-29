@@ -484,7 +484,18 @@ fn test_calc_shuo() {
 }
 
 
-// 朔计算
+// 朔望计算模块（简单模式）
+//
+// 使用 Moshier 近似算法计算朔望时刻
+// 
+// 计算模式对比：
+// - 简单模式（当前）：使用 Moshier 近似算法，速度快，精度约 1-2 秒
+// - 精准模式：使用 JPL DE 历表，速度较慢，精度 < 0.1 秒
+//
+// 函数说明：
+// - so_high(): 高精度朔望计算（相对 so_low）
+// - so_low(): 快速朔望计算（使用经验公式）
+// - qi_hight(): 节气计算
 fn so_low(w: f64) -> f64 {
     let v = 7771.37714500204;
     let mut t = (w + 1.08472) / v;
@@ -632,7 +643,7 @@ fn test_qi_low() {
     println!("{}", qi_low(w));
 }
 
-fn qi_hight(w: f64) -> f64 {
+pub fn qi_hight(w: f64) -> f64 {
     let mut t = ephemeris::solor_a_lon_t2(w) * 36525.0;
     t = t - math_utils::dt_t(t) + 8.0 / 24.0;
     let v = ((t + 0.5) % 1.0) * 86400.0;
