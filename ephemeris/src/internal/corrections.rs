@@ -317,17 +317,18 @@ pub fn annual_aberration_approx(
 /// * `tjd` - 儒略日
 ///
 /// # Returns
-/// 岁差旋转矩阵 (3x3)
+/// 岁差旋转矩阵 (3x3) - 从 J2000 转换到目标历元
 pub fn precession_vondrak_2011(tjd: f64) -> [[f64; 3]; 3] {
     use std::f64::consts::PI;
-    
+
     const D2PI: f64 = 2.0 * PI;
     const AS2R: f64 = PI / (180.0 * 3600.0); // 角秒转弧度
     const J2000: f64 = 2451545.0;
-    const EPS0: f64 = 23.439291111111 * PI / 180.0; // J2000 黄赤交角
-    
+    // EPS0 = 84381.406 角秒 = 23.439291111... 度（Vondrák 2011 标准值）
+    const EPS0: f64 = 84381.406 * AS2R;
+
     let t = (tjd - J2000) / 36525.0;
-    
+
     // ========== 黄道极计算 (pre_pecl) ==========
     // 多项式系数
     const PQPOL: [[f64; 2]; 4] = [
@@ -336,7 +337,7 @@ pub fn precession_vondrak_2011(tjd: f64) -> [[f64; 3]; 3] {
         [-0.00028913, -0.00000020],
         [0.000000101, -0.000000437],
     ];
-    
+
     // 周期项系数
     const PQPER: [[f64; 8]; 5] = [
         [708.15, 2309.0, 1620.0, 492.2, 1183.0, 622.0, 882.0, 547.0],
@@ -345,10 +346,10 @@ pub fn precession_vondrak_2011(tjd: f64) -> [[f64; 3]; 3] {
         [667.66673, -2354.886252, -428.152441, 376.202861, 184.778874, 335.321713, -185.138669, -120.97283],
         [-5523.863691, -549.74745, -310.998056, 421.535876, -36.776172, -145.278396, -34.74445, 22.885731],
     ];
-    
+
     let mut p = 0.0;
     let mut q = 0.0;
-    
+
     // 周期项
     for i in 0..8 {
         let w = D2PI * t;
@@ -358,7 +359,7 @@ pub fn precession_vondrak_2011(tjd: f64) -> [[f64; 3]; 3] {
         p += c * PQPER[1][i] + s * PQPER[3][i];
         q += c * PQPER[2][i] + s * PQPER[4][i];
     }
-    
+
     // 多项式项
     let mut w = 1.0;
     for i in 0..4 {
@@ -366,22 +367,22 @@ pub fn precession_vondrak_2011(tjd: f64) -> [[f64; 3]; 3] {
         q += PQPOL[i][1] * w;
         w *= t;
     }
-    
+
     // 转为弧度
     p *= AS2R;
     q *= AS2R;
-    
+
     // 黄道极向量
     let z = (1.0 - p*p - q*q).max(0.0).sqrt();
     let s_eps = EPS0.sin();
     let c_eps = EPS0.cos();
-    
+
     let pecl = [
         p,
         -q * c_eps - z * s_eps,
         -q * s_eps + z * c_eps,
     ];
-    
+
     // ========== 赤道极计算 (pre_pequ) ==========
     // 多项式系数
     const XYPOL: [[f64; 2]; 4] = [
@@ -390,7 +391,7 @@ pub fn precession_vondrak_2011(tjd: f64) -> [[f64; 3]; 3] {
         [-0.00037173, -0.00018725],
         [-0.000000152, 0.000000231],
     ];
-    
+
     // 周期项系数
     const XYPER: [[f64; 14]; 5] = [
         [256.75, 708.15, 274.2, 241.45, 2309.0, 492.2, 396.1, 288.9, 231.1, 1610.0, 620.0, 157.87, 220.3, 1200.0],
@@ -399,10 +400,10 @@ pub fn precession_vondrak_2011(tjd: f64) -> [[f64; 3]; 3] {
         [81491.287984, 787.163481, 1251.296102, -1257.950837, -2966.79973, 639.744522, 131.600209, -445.040117, 584.522874, -89.756563, 524.42963, -13.549067, -210.157124, -44.919798],
         [1558.515853, 7774.939698, -2219.534038, -2523.969396, 247.850422, -846.485643, -1393.124055, 368.526116, 749.045012, 444.704518, 235.934465, 374.049623, -171.33018, -22.899655],
     ];
-    
+
     let mut x = 0.0;
     let mut y = 0.0;
-    
+
     // 周期项
     for i in 0..14 {
         let w = D2PI * t;
@@ -412,7 +413,7 @@ pub fn precession_vondrak_2011(tjd: f64) -> [[f64; 3]; 3] {
         x += c * XYPER[1][i] + s * XYPER[3][i];
         y += c * XYPER[2][i] + s * XYPER[4][i];
     }
-    
+
     // 多项式项
     let mut w = 1.0;
     for i in 0..4 {
@@ -420,11 +421,11 @@ pub fn precession_vondrak_2011(tjd: f64) -> [[f64; 3]; 3] {
         y += XYPOL[i][1] * w;
         w *= t;
     }
-    
+
     // 转为弧度
     x *= AS2R;
     y *= AS2R;
-    
+
     // 赤道极向量
     let w = x*x + y*y;
     let pequ = [
@@ -432,31 +433,30 @@ pub fn precession_vondrak_2011(tjd: f64) -> [[f64; 3]; 3] {
         y,
         if w < 1.0 { (1.0 - w).sqrt() } else { 0.0 },
     ];
-    
+
     // ========== 构建岁差矩阵 ==========
-    // 春分点向量
+    // 春分点向量 = 赤道极 × 黄道极（叉积）
     let mut eqx = [0.0; 3];
     cross_prod(&pequ, &pecl, &mut eqx);
-    
-    let w = eqx.iter().map(|v| v*v).sum::<f64>().sqrt();
-    eqx.iter_mut().for_each(|v| *v /= w);
-    
-    // 构建旋转矩阵：行向量为 [X, Y, Z] 基向量
-    // X 轴指向观测时刻的春分点
-    // Z 轴指向观测时刻的黄道极
-    // Y 轴 = Z x X，完成右手系
-    let x_axis = eqx;
-    let z_axis = pecl;
-    let y_axis = [
-        z_axis[1] * x_axis[2] - z_axis[2] * x_axis[1],
-        z_axis[2] * x_axis[0] - z_axis[0] * x_axis[2],
-        z_axis[0] * x_axis[1] - z_axis[1] * x_axis[0],
-    ];
 
+    // 归一化
+    let norm = eqx.iter().map(|v| v*v).sum::<f64>().sqrt();
+    if norm > 1e-15 {
+        eqx.iter_mut().for_each(|v| *v /= norm);
+    }
+
+    // Y 轴 = 黄道极 × 春分点（完成右手系）
+    let mut y_axis = [0.0; 3];
+    cross_prod(&pecl, &eqx, &mut y_axis);
+
+    // 构建旋转矩阵（列向量形式）
+    // 第 1 列：春分点（X 轴）
+    // 第 2 列：Y 轴
+    // 第 3 列：赤道极（Z 轴）
     [
-        [x_axis[0], x_axis[1], x_axis[2]],
-        [y_axis[0], y_axis[1], y_axis[2]],
-        [z_axis[0], z_axis[1], z_axis[2]],
+        [eqx[0], y_axis[0], pequ[0]],
+        [eqx[1], y_axis[1], pequ[1]],
+        [eqx[2], y_axis[2], pequ[2]],
     ]
 }
 
@@ -514,11 +514,14 @@ pub fn apply_precession(
 ) -> Cartesian {
     // 将儒略世纪转换为儒略日
     let tjd = t * 36525.0 + 2451545.0;
-    
+
     // 使用 Vondrák 2011 岁差矩阵
     let prec_matrix = precession_vondrak_2011(tjd);
-    
-    // 应用旋转矩阵
+
+    // 应用旋转矩阵（列向量形式）
+    // x' = M[0][0]*x + M[0][1]*y + M[0][2]*z
+    // y' = M[1][0]*x + M[1][1]*y + M[1][2]*z
+    // z' = M[2][0]*x + M[2][1]*y + M[2][2]*z
     (
         pos.0 * prec_matrix[0][0] + pos.1 * prec_matrix[0][1] + pos.2 * prec_matrix[0][2],
         pos.0 * prec_matrix[1][0] + pos.1 * prec_matrix[1][1] + pos.2 * prec_matrix[1][2],
