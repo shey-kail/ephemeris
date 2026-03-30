@@ -82,7 +82,6 @@ impl JplEphemeris {
         let t = (jd_tdb - 2451545.0) / 36525.0;
 
         // 统一使用 Vondrák 2011 岁差模型（适用于 -6000 年到 +6000 年）
-        // 这确保与 Swiss Ephemeris 的长时期计算一致
         let pos_mean_equ = apply_precession(pos_j2000, t);
 
         let eps_mean = obliquity(t);
@@ -98,9 +97,33 @@ impl JplEphemeris {
         (lon_final, lat_mean)
     }
 
+    fn transform_to_apparent_equatorial(&self, pos_j2000: (f64, f64, f64), jd_tdb: f64, apply_nutation: bool) -> (f64, f64) {
+        use crate::internal::corrections::{apply_precession, compute_nutation_matrix};
+        use crate::internal::math_utils::{xyz2llr, rad2mrad};
+        use crate::internal::ephemeris::obliquity;
+
+        let t = (jd_tdb - 2451545.0) / 36525.0;
+
+        // 1. 岁差：J2000 -> 瞬时平赤道
+        let pos_mean_equ = apply_precession(pos_j2000, t);
+
+        // 2. 章动：瞬时平赤道 -> 瞬时真赤道
+        let geo_final = if apply_nutation {
+            let eps_mean = obliquity(t);
+            let nut_matrix = compute_nutation_matrix(t, eps_mean);
+            nut_matrix.apply(pos_mean_equ)
+        } else {
+            pos_mean_equ
+        };
+
+        let (ra, dec, _) = xyz2llr(geo_final);
+        (rad2mrad(ra), dec)
+    }
+
     pub fn solar_position(&self, jd_tdb: f64) -> Result<SolarPosition, String> {
         let (pos_j2000, r_km, vel) = self.compute_raw_position(SUN_J2000, jd_tdb, true)?;
         let (lon, lat) = self.transform_to_apparent_ecliptic(pos_j2000, jd_tdb, true);
+        let (ra, dec) = self.transform_to_apparent_equatorial(pos_j2000, jd_tdb, true);
         
         // 计算经度速度 (deg/day)
         let dt = 0.005;
@@ -117,6 +140,8 @@ impl JplEphemeris {
             epoch: jd_tdb,
             longitude: crate::internal::math_utils::rad2mrad(lon),
             latitude: lat,
+            apparent_ra: ra,
+            apparent_dec: dec,
             distance: r_km / crate::internal::constants::CS_AU,
             velocity_x: vel.x, velocity_y: vel.y, velocity_z: vel.z,
             longitude_speed: lon_speed,
@@ -126,6 +151,7 @@ impl JplEphemeris {
     pub fn lunar_position(&self, jd_tdb: f64) -> Result<LunarPosition, String> {
         let (pos_j2000, r_km, vel) = self.compute_raw_position(MOON_J2000, jd_tdb, true)?;
         let (lon, lat) = self.transform_to_apparent_ecliptic(pos_j2000, jd_tdb, true);
+        let (ra, dec) = self.transform_to_apparent_equatorial(pos_j2000, jd_tdb, true);
 
         // 计算经度速度 (deg/day)
         let dt = 0.005;
@@ -142,6 +168,8 @@ impl JplEphemeris {
             epoch: jd_tdb,
             longitude: crate::internal::math_utils::rad2mrad(lon),
             latitude: lat,
+            apparent_ra: ra,
+            apparent_dec: dec,
             distance: r_km / crate::internal::constants::CS_AU,
             velocity_x: vel.x, velocity_y: vel.y, velocity_z: vel.z,
             longitude_speed: lon_speed,
@@ -152,6 +180,7 @@ impl JplEphemeris {
         let frame = self.get_planet_frame(planet);
         let (pos_j2000, r_km, vel) = self.compute_raw_position(frame, jd_tdb, true)?;
         let (lon, lat) = self.transform_to_apparent_ecliptic(pos_j2000, jd_tdb, true);
+        let (ra, dec) = self.transform_to_apparent_equatorial(pos_j2000, jd_tdb, true);
 
         // 计算经度速度 (deg/day)
         let dt = 0.005;
@@ -168,6 +197,8 @@ impl JplEphemeris {
             planet, epoch: jd_tdb,
             longitude: crate::internal::math_utils::rad2mrad(lon),
             latitude: lat,
+            apparent_ra: ra,
+            apparent_dec: dec,
             distance: r_km / crate::internal::constants::CS_AU,
             velocity_x: vel.x, velocity_y: vel.y, velocity_z: vel.z,
             longitude_speed: lon_speed,
@@ -187,6 +218,7 @@ impl JplEphemeris {
 
         let (pos_app_j2000, r_km_app, vel_km_s) = self.compute_raw_position(frame, jd_tdb, apply_aberration)?;
         let (lon_app, lat_app) = self.transform_to_apparent_ecliptic(pos_app_j2000, jd_tdb, apply_nutation);
+        let (ra_app, dec_app) = self.transform_to_apparent_equatorial(pos_app_j2000, jd_tdb, apply_nutation);
 
         // 计算视经速度 (deg/day)
         let dt = 0.005;
@@ -205,6 +237,8 @@ impl JplEphemeris {
             geometric_latitude: lat_geo,
             apparent_longitude: crate::internal::math_utils::rad2mrad(lon_app),
             apparent_latitude: lat_app,
+            apparent_ra: ra_app,
+            apparent_dec: dec_app,
             distance: r_km_app / crate::internal::constants::CS_AU,
             velocity_x: vel_km_s.x,
             velocity_y: vel_km_s.y,
@@ -302,6 +336,8 @@ pub struct PlanetPosition {
     pub epoch: f64,
     pub longitude: f64,
     pub latitude: f64,
+    pub apparent_ra: f64,
+    pub apparent_dec: f64,
     pub distance: f64,
     pub velocity_x: f64,
     pub velocity_y: f64,
@@ -312,6 +348,8 @@ pub struct PlanetPosition {
 impl PlanetPosition {
     pub fn longitude_deg(&self) -> f64 { self.longitude.to_degrees() }
     pub fn latitude_deg(&self) -> f64 { self.latitude.to_degrees() }
+    pub fn apparent_ra_deg(&self) -> f64 { self.apparent_ra.to_degrees() }
+    pub fn apparent_dec_deg(&self) -> f64 { self.apparent_dec.to_degrees() }
     pub fn distance_au(&self) -> f64 { self.distance }
     /// 获取 3D 速度向量 (km/s)
     pub fn velocity_vector_km_s(&self) -> (f64, f64, f64) { (self.velocity_x, self.velocity_y, self.velocity_z) }
@@ -328,6 +366,8 @@ pub struct ApparentPlanetPosition {
     pub geometric_latitude: f64,
     pub apparent_longitude: f64,
     pub apparent_latitude: f64,
+    pub apparent_ra: f64,
+    pub apparent_dec: f64,
     pub distance: f64,
     pub velocity_x: f64,
     pub velocity_y: f64,
@@ -339,6 +379,8 @@ pub struct ApparentPlanetPosition {
 impl ApparentPlanetPosition {
     pub fn apparent_longitude_deg(&self) -> f64 { self.apparent_longitude.to_degrees() }
     pub fn apparent_latitude_deg(&self) -> f64 { self.apparent_latitude.to_degrees() }
+    pub fn apparent_ra_deg(&self) -> f64 { self.apparent_ra.to_degrees() }
+    pub fn apparent_dec_deg(&self) -> f64 { self.apparent_dec.to_degrees() }
     pub fn geometric_longitude_deg(&self) -> f64 { self.geometric_longitude.to_degrees() }
     pub fn distance_au(&self) -> f64 { self.distance }
     pub fn speed_km_s(&self) -> f64 { (self.velocity_x.powi(2) + self.velocity_y.powi(2) + self.velocity_z.powi(2)).sqrt() }
@@ -349,6 +391,8 @@ pub struct SolarPosition {
     pub epoch: f64, 
     pub longitude: f64, 
     pub latitude: f64, 
+    pub apparent_ra: f64,
+    pub apparent_dec: f64,
     pub distance: f64, 
     pub velocity_x: f64, 
     pub velocity_y: f64, 
@@ -358,6 +402,8 @@ pub struct SolarPosition {
 impl SolarPosition {
     pub fn longitude_deg(&self) -> f64 { self.longitude.to_degrees() }
     pub fn latitude_deg(&self) -> f64 { self.latitude.to_degrees() }
+    pub fn apparent_ra_deg(&self) -> f64 { self.apparent_ra.to_degrees() }
+    pub fn apparent_dec_deg(&self) -> f64 { self.apparent_dec.to_degrees() }
     pub fn distance_km(&self) -> f64 { self.distance * 149597870.7 }
     pub fn longitude_speed_deg_day(&self) -> f64 { self.longitude_speed }
 }
@@ -366,6 +412,8 @@ pub struct LunarPosition {
     pub epoch: f64, 
     pub longitude: f64, 
     pub latitude: f64, 
+    pub apparent_ra: f64,
+    pub apparent_dec: f64,
     pub distance: f64, 
     pub velocity_x: f64, 
     pub velocity_y: f64, 
@@ -375,6 +423,8 @@ pub struct LunarPosition {
 impl LunarPosition {
     pub fn longitude_deg(&self) -> f64 { self.longitude.to_degrees() }
     pub fn latitude_deg(&self) -> f64 { self.latitude.to_degrees() }
+    pub fn apparent_ra_deg(&self) -> f64 { self.apparent_ra.to_degrees() }
+    pub fn apparent_dec_deg(&self) -> f64 { self.apparent_dec.to_degrees() }
     pub fn distance_km(&self) -> f64 { self.distance * 149597870.7 }
     pub fn longitude_speed_deg_day(&self) -> f64 { self.longitude_speed }
 }

@@ -12,8 +12,10 @@ use std::process::Command;
 struct SwetestResult {
     lon: f64,
     lat: f64,
+    ra: f64,
+    dec: f64,
     dist: f64,
-    speed: f64, // km/s
+    speed: f64, // deg/day
 }
 
 /// 运行 swetest 获取指定 JD 的全方位参数
@@ -21,9 +23,9 @@ fn run_swetest_detailed(jd: f64, planet_flag: &str) -> Result<SwetestResult, Str
     let swetest_path = "/home/shey/Codes/my/ephemeris/swetest";
     let ephe_path = "/home/shey/Codes/my/ephemeris/ephe";
 
-    // -fPlbrs: P(name), l(lon dec), b(lat dec), r(dist AU), s(speed lon deg/day)
+    // -fPlbrsad: P(name), l(lon), b(lat), r(dist), s(speed), a(RA), d(Dec)
     let cmd_str = format!(
-        "SE_EPHE_PATH={} {} -j{} -p{} -fPlbrs -n1 -head",
+        "SE_EPHE_PATH={} {} -j{} -p{} -fPlbrsad -n1 -head",
         ephe_path, swetest_path, jd, planet_flag
     );
 
@@ -44,6 +46,8 @@ fn run_swetest_detailed(jd: f64, planet_flag: &str) -> Result<SwetestResult, Str
     let lat = parts.get(2).and_then(|s| s.parse::<f64>().ok()).unwrap_or(0.0);
     let mut dist_str = parts.get(3).unwrap_or(&"0.0").to_string();
     let speed = parts.get(4).and_then(|s| s.parse::<f64>().ok()).unwrap_or(0.0);
+    let ra = parts.get(5).and_then(|s| s.parse::<f64>().ok()).unwrap_or(0.0);
+    let dec = parts.get(6).and_then(|s| s.parse::<f64>().ok()).unwrap_or(0.0);
 
     let mut dist = 0.0;
     if dist_str.contains('\"') {
@@ -59,7 +63,7 @@ fn run_swetest_detailed(jd: f64, planet_flag: &str) -> Result<SwetestResult, Str
         dist = dist_str.parse::<f64>().unwrap_or(0.0);
     }
     
-    Ok(SwetestResult { lon, lat, dist, speed })
+    Ok(SwetestResult { lon, lat, ra, dec, dist, speed })
 }
 
 fn jd_to_year(jd: f64) -> String {
@@ -105,12 +109,21 @@ fn test_jpl441_vs_swisseph_detailed_6000_years() {
             let d_lat = (swe.lat - pos.latitude_deg()).abs();
             println!("{:<10} {:>15} {:>15.6} {:>15.6} {:>15.4}\"", "", "Latitude", swe.lat, pos.latitude_deg(), d_lat * 3600.0);
 
-            // 3. Distance (AU)
+            // 3. RA (deg)
+            let mut d_ra = (swe.ra - pos.apparent_ra_deg()).abs();
+            if d_ra > 180.0 { d_ra = 360.0 - d_ra; }
+            println!("{:<10} {:>15} {:>15.6} {:>15.6} {:>15.4}\"", "", "RA", swe.ra, pos.apparent_ra_deg(), d_ra * 3600.0);
+
+            // 4. Dec (deg)
+            let d_dec = (swe.dec - pos.apparent_dec_deg()).abs();
+            println!("{:<10} {:>15} {:>15.6} {:>15.6} {:>15.4}\"", "", "Dec", swe.dec, pos.apparent_dec_deg(), d_dec * 3600.0);
+
+            // 5. Distance (AU)
             let d_dist = (swe.dist - pos.distance_au()).abs();
             let d_dist_pct = (d_dist / swe.dist) * 100.0;
             println!("{:<10} {:>15} {:>15.8} {:>15.8} {:>15.6}%", "", "Distance(AU)", swe.dist, pos.distance_au(), d_dist_pct);
 
-            // 4. Longitude Speed (deg/day)
+            // 6. Longitude Speed (deg/day)
             let jpl_speed = pos.longitude_speed_deg_day();
             let d_speed = (swe.speed - jpl_speed).abs();
             println!("{:<10} {:>15} {:>15.8} {:>15.8} {:>15.6}\"/day", "", "Lon Speed", swe.speed, jpl_speed, d_speed * 3600.0);
