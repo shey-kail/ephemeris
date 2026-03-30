@@ -890,26 +890,32 @@ pub fn compute_solar_apparent_position(
 /// - 光时很短（约 1.3 秒），但需要考虑
 /// - 光行差很小（约 0.003 角秒）
 /// - m_coord 返回的距离单位是地球半径，不是 AU
+/// 
+/// 参考 Swiss Ephemeris app_pos_etc_moon() 实现
 pub fn compute_lunar_apparent_position(
     t: f64,
     earth_pos: Spherical,
 ) -> (f64, f64, f64, f64, f64, f64) {
     // 获取月球位置（距离单位是地球半径）
     let moon_pos = m_coord(t, -1, -1, -1);
-    
+
     // 将月球距离从地球半径转换为 AU
     // 1 AU = 149597870.7 km, 地球半径 = 6378.14 km
     // 1 AU ≈ 23455 地球半径
     const EARTH_RADIUS_PER_AU: f64 = 23455.0;
     let moon_dist_au = moon_pos.2 / EARTH_RADIUS_PER_AU;
-    
+
     // 月光时（约 1.3 秒）
     let light_time = moon_dist_au * LIGHT_TIME_PER_AU;
-    
+
     // 回溯到光线发射时刻
-    let current_t = t - light_time / 36525.0;
-    let moon_retarded = m_coord(current_t, -1, -1, -1);
+    let retarded_t = t - light_time / 36525.0;
     
+    // 关键修复：在回溯时刻重新计算月球和地球位置
+    // 这与 Swiss Ephemeris 的实现一致
+    let moon_retarded = m_coord(retarded_t, -1, -1, -1);
+    let earth_retarded = super::ephemeris::earth_lon(retarded_t, -1); // 回溯时刻的地球黄经
+
     // 将月球位置转换为 AU 单位
     let moon_xyz_au = {
         let moon_xyz = llr2xyz(moon_retarded);
@@ -919,21 +925,22 @@ pub fn compute_lunar_apparent_position(
             moon_xyz.2 / EARTH_RADIUS_PER_AU,
         )
     };
-    
-    // 2. 地心坐标
-    let earth_xyz = llr2xyz(earth_pos);
-    
+
+    // 回溯时刻的地球位置
+    let earth_xyz_retarded = llr2xyz((earth_retarded, 0.0, 1.0));
+
+    // 2. 地心坐标（使用回溯时刻的地球位置）
     let geo_xyz = (
-        moon_xyz_au.0 - earth_xyz.0,
-        moon_xyz_au.1 - earth_xyz.1,
-        moon_xyz_au.2 - earth_xyz.2,
+        moon_xyz_au.0 - earth_xyz_retarded.0,
+        moon_xyz_au.1 - earth_xyz_retarded.1,
+        moon_xyz_au.2 - earth_xyz_retarded.2,
     );
 
     // 3. 月球不需要引力偏折（距离太近）
 
-    // 4. 光行差修正
-    let earth_vel = compute_earth_velocity(t, 0.0001);
-    let geo_aberrated = annual_aberration(geo_xyz, earth_vel);
+    // 4. 光行差修正（使用回溯时刻的地球速度）
+    let earth_vel_retarded = compute_earth_velocity(retarded_t, 0.0001);
+    let geo_aberrated = annual_aberration(geo_xyz, earth_vel_retarded);
 
     // 5. 岁差修正
     let geo_precessed = apply_precession(geo_aberrated, t);
