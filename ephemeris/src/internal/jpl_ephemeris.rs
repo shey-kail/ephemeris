@@ -77,13 +77,23 @@ impl JplEphemeris {
     }
 
     fn transform_to_apparent_ecliptic(&self, pos_j2000: (f64, f64, f64), jd_tdb: f64, apply_nutation: bool) -> (f64, f64) {
-        let t = (jd_tdb - 2451545.0) / 36525.0;
-        use crate::internal::corrections::{apply_precession_iau2006, equatorial_to_ecliptic};
+        use crate::internal::corrections::{apply_precession_iau2006, apply_precession, equatorial_to_ecliptic};
         use crate::internal::ephemeris::obliquity;
         use crate::internal::math_utils::xyz2llr;
 
-        // 使用 IAU 2006 岁差模型
-        let pos_mean_equ = apply_precession_iau2006(pos_j2000, t);
+        let t = (jd_tdb - 2451545.0) / 36525.0;
+        
+        // 根据时间范围选择岁差模型
+        // IAU 2006 适用于 -75 到 +75 儒略世纪（约 -1000 年到 +3000 年）
+        // Vondrák 2011 适用于 -6000 年到 +6000 年
+        let pos_mean_equ = if t.abs() > 75.0 {
+            // 长时期使用 Vondrák 2011
+            apply_precession(pos_j2000, t)
+        } else {
+            // 短时期使用 IAU 2006
+            apply_precession_iau2006(pos_j2000, t)
+        };
+        
         let eps_mean = obliquity(t);
         let pos_mean_ecl = equatorial_to_ecliptic(pos_mean_equ, eps_mean);
         let (lon_mean, lat_mean, _) = xyz2llr(pos_mean_ecl);
