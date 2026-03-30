@@ -22,12 +22,10 @@ impl JplEphemerisType {
         let workspace_root = env!("CARGO_MANIFEST_DIR").to_string() + "/..";
         match self {
             JplEphemerisType::DE431 => vec![
-                workspace_root.clone() + "/bsp/431/de431_part-1.bsp",
-                workspace_root.clone() + "/bsp/431/de431_part-2.bsp",
+                workspace_root.clone() + "/bsp/431/de431_3000bc_3000ad.bsp",
             ],
             JplEphemerisType::DE441 => vec![
-                workspace_root.clone() + "/bsp/441/de441_part-1.bsp",
-                workspace_root.clone() + "/bsp/441/de441_part-2.bsp",
+                workspace_root.clone() + "/bsp/441/de441_3000bc_3000ad.bsp",
             ],
             JplEphemerisType::DE441Lite => vec![
                 workspace_root + "/bsp/441/de441_3000bc_3000ad.bsp",
