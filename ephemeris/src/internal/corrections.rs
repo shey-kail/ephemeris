@@ -540,7 +540,13 @@ pub fn apply_precession_iau2006(
 ) -> Cartesian {
     let (zeta, z_angle, theta) = precession_iau2006(t);
 
-    // 第一步：Rz(-zeta)
+    // IAU 2006 岁差变换：Rz(-z_A) × Ry(+θ_A) × Rz(-ζ_A)
+    // 从 J2000 转换到目标历元
+    
+    // 第一步：Rz(-ζ_A) - 绕 Z 轴旋转 -zeta
+    // Rz(-α) = [cos α    sin α   0]
+    //          [-sin α   cos α   0]
+    //          [0        0       1]
     let (x, y, z_coord) = pos;
     let cos_zeta = zeta.cos();
     let sin_zeta = zeta.sin();
@@ -550,16 +556,19 @@ pub fn apply_precession_iau2006(
         z_coord,
     );
 
-    // 第二步：Ry(theta)
+    // 第二步：Ry(+θ_A) - 绕 Y 轴旋转 +theta
+    // Ry(+β) = [cos β    0   sin β]
+    //          [0        1   0    ]
+    //          [-sin β   0   cos β]
     let cos_theta = theta.cos();
     let sin_theta = theta.sin();
     let (x2, y2, z2) = (
-        x1 * cos_theta - z1 * sin_theta,
+        x1 * cos_theta + z1 * sin_theta,
         y1,
-        x1 * sin_theta + z1 * cos_theta,
+        -x1 * sin_theta + z1 * cos_theta,
     );
 
-    // 第三步：Rz(-z)
+    // 第三步：Rz(-z_A) - 绕 Z 轴旋转 -z
     let cos_z_rot = z_angle.cos();
     let sin_z_rot = z_angle.sin();
     let (x3, y3, z3) = (

@@ -82,6 +82,7 @@ impl JplEphemeris {
         use crate::internal::ephemeris::obliquity;
         use crate::internal::math_utils::xyz2llr;
 
+        // 使用 IAU 2006 岁差模型
         let pos_mean_equ = apply_precession_iau2006(pos_j2000, t);
         let eps_mean = obliquity(t);
         let pos_mean_ecl = equatorial_to_ecliptic(pos_mean_equ, eps_mean);
