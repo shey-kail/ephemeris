@@ -82,18 +82,18 @@ impl JplEphemeris {
         use crate::internal::math_utils::xyz2llr;
 
         let t = (jd_tdb - 2451545.0) / 36525.0;
-        
+
         // 根据时间范围选择岁差模型
-        // IAU 2006 适用于 -75 到 +75 儒略世纪（约 -1000 年到 +3000 年）
+        // IAU 2006 仅适用于 -2 到 +2 儒略世纪（约 1800 年到 2200 年）
         // Vondrák 2011 适用于 -6000 年到 +6000 年
-        let pos_mean_equ = if t.abs() > 75.0 {
+        let pos_mean_equ = if t.abs() > 2.0 {
             // 长时期使用 Vondrák 2011
             apply_precession(pos_j2000, t)
         } else {
             // 短时期使用 IAU 2006
             apply_precession_iau2006(pos_j2000, t)
         };
-        
+
         let eps_mean = obliquity(t);
         let pos_mean_ecl = equatorial_to_ecliptic(pos_mean_equ, eps_mean);
         let (lon_mean, lat_mean, _) = xyz2llr(pos_mean_ecl);

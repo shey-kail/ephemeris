@@ -445,9 +445,10 @@ pub fn precession_vondrak_2011(tjd: f64) -> [[f64; 3]; 3] {
         eqx.iter_mut().for_each(|v| *v /= norm);
     }
 
-    // Y 轴 = 黄道极 × 春分点（完成右手系）
+    // Y 轴 = 赤道极 × 春分点（完成右手系）
+    // 注意：Swiss Ephemeris 使用的是 peqr × eqx，不是 pecl × eqx
     let mut y_axis = [0.0; 3];
-    cross_prod(&pecl, &eqx, &mut y_axis);
+    cross_prod(&pequ, &eqx, &mut y_axis);
 
     // 构建旋转矩阵（列向量形式）
     // 第 1 列：春分点（X 轴）
@@ -516,16 +517,18 @@ pub fn apply_precession(
     let tjd = t * 36525.0 + 2451545.0;
 
     // 使用 Vondrák 2011 岁差矩阵
+    // 注意：precession_vondrak_2011 返回的是从目标历元到 J2000 的变换矩阵
+    // 我们需要用它的转置来从 J2000 转换到目标历元
     let prec_matrix = precession_vondrak_2011(tjd);
 
-    // 应用旋转矩阵（列向量形式）
-    // x' = M[0][0]*x + M[0][1]*y + M[0][2]*z
-    // y' = M[1][0]*x + M[1][1]*y + M[1][2]*z
-    // z' = M[2][0]*x + M[2][1]*y + M[2][2]*z
+    // 应用旋转矩阵的转置（从 J2000 到目标历元）
+    // x' = M[0][0]*x + M[1][0]*y + M[2][0]*z
+    // y' = M[0][1]*x + M[1][1]*y + M[2][1]*z
+    // z' = M[0][2]*x + M[1][2]*y + M[2][2]*z
     (
-        pos.0 * prec_matrix[0][0] + pos.1 * prec_matrix[0][1] + pos.2 * prec_matrix[0][2],
-        pos.0 * prec_matrix[1][0] + pos.1 * prec_matrix[1][1] + pos.2 * prec_matrix[1][2],
-        pos.0 * prec_matrix[2][0] + pos.1 * prec_matrix[2][1] + pos.2 * prec_matrix[2][2],
+        pos.0 * prec_matrix[0][0] + pos.1 * prec_matrix[1][0] + pos.2 * prec_matrix[2][0],
+        pos.0 * prec_matrix[0][1] + pos.1 * prec_matrix[1][1] + pos.2 * prec_matrix[2][1],
+        pos.0 * prec_matrix[0][2] + pos.1 * prec_matrix[1][2] + pos.2 * prec_matrix[2][2],
     )
 }
 
