@@ -406,7 +406,7 @@ fn main() {
 /// 运行对比模式
 fn run_compare_mode() {
     let args: Vec<String> = env::args().collect();
-    
+
     // 解析参数
     let mut output_file = "comparison.csv".to_string();
     let mut start_year = 2000;
@@ -423,6 +423,7 @@ fn run_compare_mode() {
     let mut end_second = 0.0;
     let mut step = 1.0; // 步长（天）
     let mut body_id: usize = 10; // 默认月球
+    let mut bsp_path: Option<String> = None; // 自定义 BSP 路径
 
     let mut i = 2; // 跳过 "ephemeris-calc" 和 "--compare"
     while i < args.len() {
@@ -431,6 +432,12 @@ fn run_compare_mode() {
                 i += 1;
                 if i < args.len() {
                     output_file = args[i].clone();
+                }
+            }
+            "--bsp-path" => {
+                i += 1;
+                if i < args.len() {
+                    bsp_path = Some(args[i].clone());
                 }
             }
             "--start-year" => {
@@ -546,15 +553,28 @@ fn run_compare_mode() {
     println!("计算天数：{:.1}", days);
     println!("步长：{} 天", step);
     println!("计算天体：{}", body_name(body_id));
+    if let Some(ref path) = bsp_path {
+        println!("BSP 路径：{}", path);
+    }
     println!();
 
-    // 创建精准模式 JPL 历表
-    let jpl = match JplEphemeris::new(JplEphemerisType::DE441Lite) {
-        Ok(ep) => ep,
-        Err(e) => {
-            eprintln!("加载 JPL 历表失败：{}", e);
-            eprintln!("请确保 DE441 BSP 文件存在于 bsp/441/ 目录");
-            std::process::exit(1);
+    // 创建精准模式 JPL 历表（支持自定义 BSP 路径）
+    let jpl = if let Some(ref path) = bsp_path {
+        match JplEphemeris::with_custom_paths(JplEphemerisType::DE441Lite, Some(vec![path.clone()])) {
+            Ok(ep) => ep,
+            Err(e) => {
+                eprintln!("加载 JPL 历表失败：{}", e);
+                std::process::exit(1);
+            }
+        }
+    } else {
+        match JplEphemeris::new(JplEphemerisType::DE441Lite) {
+            Ok(ep) => ep,
+            Err(e) => {
+                eprintln!("加载 JPL 历表失败：{}", e);
+                eprintln!("请确保 DE441 BSP 文件存在于 bsp/441/ 目录");
+                std::process::exit(1);
+            }
         }
     };
 
