@@ -13,8 +13,22 @@ readme = "README.md"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-anise = "0.9.6"
+anise = { version = "0.9.6", default-features = false, features = ["csv"] }
 lazy_static = "1.4"
+
+# 优化发布版本大小
+[profile.release]
+opt-level = 3           # 最高优化级别
+lto = true              # 链接时优化
+codegen-units = 1       # 减少代码生成单元，提高优化效果
+strip = true            # 剥离调试信息
+panic = "abort"         # 减小 panic 处理代码
+
+# 开发时的快速编译配置
+[profile.dev]
+opt-level = 0
+debug = 1               # 减少调试信息
+codegen-units = 16
 
 [dev-dependencies]
 rand = { version = "0.9", features = ["std_rng"] }
