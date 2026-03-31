@@ -375,9 +375,19 @@ fn run_compare_mode() {
     
     // 解析参数
     let mut output_file = "comparison.csv".to_string();
-    let mut start_jd = 2451545.0;
-    let mut days = 365;
-    let mut step = 1.0;
+    let mut start_year = 2000;
+    let mut start_month = 1;
+    let mut start_day = 1;
+    let mut start_hour = 12;
+    let mut start_minute = 0;
+    let mut start_second = 0.0;
+    let mut end_year = 2000;
+    let mut end_month = 12;
+    let mut end_day = 31;
+    let mut end_hour = 12;
+    let mut end_minute = 0;
+    let mut end_second = 0.0;
+    let mut step = 1.0; // 步长（天）
     let mut body_id: usize = 10; // 默认月球
 
     let mut i = 2; // 跳过 "ephemeris-calc" 和 "--compare"
@@ -389,16 +399,56 @@ fn run_compare_mode() {
                     output_file = args[i].clone();
                 }
             }
-            "--start-jd" => {
+            "--start" => {
                 i += 1;
                 if i < args.len() {
-                    start_jd = args[i].parse().unwrap_or(2451545.0);
+                    start_year = args[i].parse().unwrap_or(2000);
+                }
+                i += 1;
+                if i < args.len() {
+                    start_month = args[i].parse().unwrap_or(1);
+                }
+                i += 1;
+                if i < args.len() {
+                    start_day = args[i].parse().unwrap_or(1);
+                }
+                i += 1;
+                if i < args.len() {
+                    start_hour = args[i].parse().unwrap_or(12);
+                }
+                i += 1;
+                if i < args.len() {
+                    start_minute = args[i].parse().unwrap_or(0);
+                }
+                i += 1;
+                if i < args.len() {
+                    start_second = args[i].parse().unwrap_or(0.0);
                 }
             }
-            "--days" => {
+            "--end" => {
                 i += 1;
                 if i < args.len() {
-                    days = args[i].parse().unwrap_or(365);
+                    end_year = args[i].parse().unwrap_or(2000);
+                }
+                i += 1;
+                if i < args.len() {
+                    end_month = args[i].parse().unwrap_or(12);
+                }
+                i += 1;
+                if i < args.len() {
+                    end_day = args[i].parse().unwrap_or(31);
+                }
+                i += 1;
+                if i < args.len() {
+                    end_hour = args[i].parse().unwrap_or(12);
+                }
+                i += 1;
+                if i < args.len() {
+                    end_minute = args[i].parse().unwrap_or(0);
+                }
+                i += 1;
+                if i < args.len() {
+                    end_second = args[i].parse().unwrap_or(0.0);
                 }
             }
             "--step" => {
@@ -426,11 +476,20 @@ fn run_compare_mode() {
         i += 1;
     }
 
+    // 将公历时间转换为儒略日
+    let start_jd_obj = JulianDate::from_ymdhms_ut(start_year, start_month, start_day, start_hour, start_minute, start_second);
+    let end_jd_obj = JulianDate::from_ymdhms_ut(end_year, end_month, end_day, end_hour, end_minute, end_second);
+    let start_jd = start_jd_obj.jd;
+    let end_jd = end_jd_obj.jd;
+    
+    let days = (end_jd - start_jd).abs();
+
     println!("寿星天文历 - 简单模式 vs 精准模式 对比工具");
     println!("================================================");
     println!("输出文件：{}", output_file);
-    println!("起始 JD: {:.1}", start_jd);
-    println!("计算天数：{}", days);
+    println!("起始时间：{:04}-{:02}-{:02} {:02}:{:02}:{:04.1}", start_year, start_month, start_day, start_hour, start_minute, start_second);
+    println!("结束时间：{:04}-{:02}-{:02} {:02}:{:02}:{:04.1}", end_year, end_month, end_day, end_hour, end_minute, end_second);
+    println!("计算天数：{:.1}", days);
     println!("步长：{} 天", step);
     println!("计算天体：{}", body_name(body_id));
     println!();
@@ -621,9 +680,9 @@ fn print_compare_usage() {
     eprintln!();
     eprintln!("选项:");
     eprintln!("  --output, -o <file>   输出 CSV 文件路径 (默认：comparison.csv)");
-    eprintln!("  --start-jd <jd>       起始儒略日 (默认：2451545.0 = J2000)");
-    eprintln!("  --days <n>            计算天数 (默认：365)");
-    eprintln!("  --step <n>            步长（天）(默认：1)");
+    eprintln!("  --start <y m d h m s> 起始时间 (默认：2000 1 1 12 0 0.0)");
+    eprintln!("  --end <y m d h m s>   结束时间 (默认：2000 12 31 12 0 0.0)");
+    eprintln!("  --step <days>         步长（天）(默认：1.0)");
     eprintln!("  --body <id>           天体 ID (默认：10 = 月球)");
     eprintln!("                        9=太阳，10=月球，1=水星，2=金星，3=火星，4=木星，5=土星");
     eprintln!("  --help, -h            显示帮助信息");
@@ -632,12 +691,15 @@ fn print_compare_usage() {
     eprintln!("  CalendarDate,SimpleLon,PreciseLon,SimpleLat,PreciseLat,SimpleSpeed,PreciseSpeed,SimpleRA,PreciseRA,SimpleDec,PreciseDec");
     eprintln!();
     eprintln!("示例:");
-    eprintln!("  # 对比月球在 J2000 附近 365 天的位置");
-    eprintln!("  ephemeris-calc --compare --output moon.csv --start-jd 2451545.0 --days 365");
+    eprintln!("  # 对比月球在 2000 年全年的位置（默认步长 1 天）");
+    eprintln!("  ephemeris-calc --compare --start 2000 1 1 12 0 0 --end 2000 12 31 12 0 0");
     eprintln!();
     eprintln!("  # 对比太阳在 2000 年的位置（步长 10 天）");
-    eprintln!("  ephemeris-calc --compare --body 9 --step 10 --days 365");
+    eprintln!("  ephemeris-calc --compare --body 9 --step 10 --start 2000 1 1 12 0 0 --end 2000 12 31 12 0 0");
     eprintln!();
-    eprintln!("  # 对比远古时期月球（公元前 1000 年）");
-    eprintln!("  ephemeris-calc --compare --start-jd 1355804.5 --days 365 --body 10");
+    eprintln!("  # 对比远古时期月球（公元前 1000 年全年）");
+    eprintln!("  ephemeris-calc --compare --start -1000 1 1 12 0 0 --end -1000 12 31 12 0 0 --body 10");
+    eprintln!();
+    eprintln!("  # 对比月球在指定月份（步长 0.5 天 = 12 小时）");
+    eprintln!("  ephemeris-calc --compare --start 2024 1 1 0 0 0 --end 2024 1 31 23 59 59 --step 0.5");
 }
