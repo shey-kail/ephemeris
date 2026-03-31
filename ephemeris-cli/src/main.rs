@@ -11,6 +11,9 @@
 //!   或：ephemeris-calc --batch < queries.txt
 //!   每行格式：body_id year month day hour minute second [tz] [lon] [lat]
 //!
+//! 用法 4（对比模式）- 比较简单模式和精准模式：
+//!   ephemeris-calc --compare --output comparison.csv --start-jd 2451545.0 --days 365 --step 1 --body 10
+//!
 //! 参数:
 //!   body_id: 天体 ID (0:地球，1:水星，... 9:太阳，10:月亮)
 //!   year: 年 (例如 2023)
@@ -25,13 +28,31 @@
 //!   lat: 纬度，弧度制 (默认 0)
 
 use rust_ephemeris::astronomy::{calculate_celestial_body, CelestialBody};
+use rust_ephemeris::internal::jpl_ephemeris::{JplEphemeris, JplEphemerisType};
 use rust_ephemeris::JulianDate;
 use serde::Serialize;
 use std::env;
-use std::io::{self, BufRead, Write};
+use std::fs::File;
+use std::io::{self, BufRead, BufWriter, Write};
 
 const RAD_TO_DEG: f64 = 180.0 / std::f64::consts::PI;
 const AU_KM: f64 = 149597870.7; // 天文单位（千米）
+
+/// 对比模式结果
+#[derive(Serialize)]
+struct CompareResult {
+    calendar_date: String,
+    simple_lon: f64,
+    precise_lon: f64,
+    simple_lat: f64,
+    precise_lat: f64,
+    simple_speed: f64,
+    precise_speed: f64,
+    simple_ra: f64,
+    precise_ra: f64,
+    simple_dec: f64,
+    precise_dec: f64,
+}
 
 #[derive(Serialize)]
 struct EphemerisResult {
@@ -88,6 +109,9 @@ fn print_usage() {
     eprintln!("  echo \"10 2000 1 1 12 0 0\" | ephemeris-calc --batch");
     eprintln!("  或：ephemeris-calc --batch < queries.txt");
     eprintln!("  每行格式：body_id year month day hour minute second [tz] [lon] [lat]");
+    eprintln!();
+    eprintln!("用法 4（对比模式）- 比较简单模式和精准模式：");
+    eprintln!("  ephemeris-calc --compare --output comparison.csv --start-jd 2451545.0 --days 365");
     eprintln!();
     eprintln!("参数:");
     eprintln!("  body_id: 天体 ID (0:地球，1:水星，2:金星，3:火星，4:木星，5:土星，6:天王星，7:海王星，8:冥王星，9:太阳，10:月亮)");
@@ -222,6 +246,12 @@ fn main() {
         std::process::exit(1);
     }
 
+    // 检查是否启用对比模式
+    if args.iter().any(|arg| arg == "--compare") {
+        run_compare_mode();
+        return;
+    }
+
     // 检查是否启用批处理模式
     if args.iter().any(|arg| arg == "--batch" || arg == "-b") {
         run_batch_mode();
@@ -337,4 +367,277 @@ fn main() {
     };
 
     println!("{}", serde_json::to_string(&output).unwrap());
+}
+
+/// 运行对比模式
+fn run_compare_mode() {
+    let args: Vec<String> = env::args().collect();
+    
+    // 解析参数
+    let mut output_file = "comparison.csv".to_string();
+    let mut start_jd = 2451545.0;
+    let mut days = 365;
+    let mut step = 1.0;
+    let mut body_id: usize = 10; // 默认月球
+
+    let mut i = 2; // 跳过 "ephemeris-calc" 和 "--compare"
+    while i < args.len() {
+        match args[i].as_str() {
+            "--output" | "-o" => {
+                i += 1;
+                if i < args.len() {
+                    output_file = args[i].clone();
+                }
+            }
+            "--start-jd" => {
+                i += 1;
+                if i < args.len() {
+                    start_jd = args[i].parse().unwrap_or(2451545.0);
+                }
+            }
+            "--days" => {
+                i += 1;
+                if i < args.len() {
+                    days = args[i].parse().unwrap_or(365);
+                }
+            }
+            "--step" => {
+                i += 1;
+                if i < args.len() {
+                    step = args[i].parse().unwrap_or(1.0);
+                }
+            }
+            "--body" => {
+                i += 1;
+                if i < args.len() {
+                    body_id = args[i].parse().unwrap_or(10);
+                }
+            }
+            "--help" | "-h" => {
+                print_compare_usage();
+                return;
+            }
+            _ => {
+                eprintln!("未知参数：{}", args[i]);
+                print_compare_usage();
+                std::process::exit(1);
+            }
+        }
+        i += 1;
+    }
+
+    println!("寿星天文历 - 简单模式 vs 精准模式 对比工具");
+    println!("================================================");
+    println!("输出文件：{}", output_file);
+    println!("起始 JD: {:.1}", start_jd);
+    println!("计算天数：{}", days);
+    println!("步长：{} 天", step);
+    println!("计算天体：{}", body_name(body_id));
+    println!();
+
+    // 创建精准模式 JPL 历表
+    let jpl = match JplEphemeris::new(JplEphemerisType::DE441Lite) {
+        Ok(ep) => ep,
+        Err(e) => {
+            eprintln!("加载 JPL 历表失败：{}", e);
+            eprintln!("请确保 DE441 BSP 文件存在于 bsp/441/ 目录");
+            std::process::exit(1);
+        }
+    };
+
+    // 创建输出文件
+    let file = File::create(&output_file).expect("无法创建输出文件");
+    let mut writer = BufWriter::new(file);
+
+    // 写入 CSV 表头
+    writeln!(writer, "CalendarDate,SimpleLon,PreciseLon,SimpleLat,PreciseLat,SimpleSpeed,PreciseSpeed,SimpleRA,PreciseRA,SimpleDec,PreciseDec").unwrap();
+
+    let mut total_comparisons = 0;
+    let mut excellent_count = 0;
+    let mut good_count = 0;
+    let mut acceptable_count = 0;
+    let mut poor_count = 0;
+
+    let mut jd = start_jd;
+    let end_jd = start_jd + days as f64;
+
+    while jd <= end_jd {
+        match compare_position(body_id, jd, &jpl) {
+            Ok(result) => {
+                writeln!(
+                    writer,
+                    "{},{:.6},{:.6},{:.6},{:.6},{:.6},{:.6},{:.6},{:.6},{:.6},{:.6}",
+                    result.calendar_date,
+                    result.simple_lon,
+                    result.precise_lon,
+                    result.simple_lat,
+                    result.precise_lat,
+                    result.simple_speed,
+                    result.precise_speed,
+                    result.simple_ra,
+                    result.precise_ra,
+                    result.simple_dec,
+                    result.precise_dec
+                ).unwrap();
+
+                let mut lon_diff = (result.simple_lon - result.precise_lon).abs();
+                if lon_diff > 180.0 {
+                    lon_diff = 360.0 - lon_diff;
+                }
+                let lon_diff_arcsec = lon_diff * 3600.0;
+
+                total_comparisons += 1;
+                if lon_diff_arcsec < 1.0 {
+                    excellent_count += 1;
+                } else if lon_diff_arcsec < 10.0 {
+                    good_count += 1;
+                } else if lon_diff_arcsec < 60.0 {
+                    acceptable_count += 1;
+                } else {
+                    poor_count += 1;
+                }
+            }
+            Err(e) => {
+                eprintln!("JD {:.1} 计算错误：{}", jd, e);
+            }
+        }
+
+        jd += step;
+    }
+
+    writer.flush().unwrap();
+
+    println!("\n对比完成！");
+    println!("================================================");
+    println!("总对比数：{}", total_comparisons);
+    println!("EXCELLENT (< 1 角秒):     {:>6} ({:.1}%)", excellent_count, excellent_count as f64 / total_comparisons as f64 * 100.0);
+    println!("GOOD (1-10 角秒):         {:>6} ({:.1}%)", good_count, good_count as f64 / total_comparisons as f64 * 100.0);
+    println!("ACCEPTABLE (10-60 角秒):  {:>6} ({:.1}%)", acceptable_count, acceptable_count as f64 / total_comparisons as f64 * 100.0);
+    println!("POOR (> 60 角秒):         {:>6} ({:.1}%)", poor_count, poor_count as f64 / total_comparisons as f64 * 100.0);
+    println!();
+    println!("CSV 文件已保存到：{}", output_file);
+}
+
+fn body_id_to_celestial(id: usize) -> CelestialBody {
+    match id {
+        0 => CelestialBody::Earth,
+        1 => CelestialBody::Mercury,
+        2 => CelestialBody::Venus,
+        3 => CelestialBody::Mars,
+        4 => CelestialBody::Jupiter,
+        5 => CelestialBody::Saturn,
+        6 => CelestialBody::Uranus,
+        7 => CelestialBody::Neptune,
+        8 => CelestialBody::Pluto,
+        9 => CelestialBody::Sun,
+        10 => CelestialBody::Moon,
+        _ => CelestialBody::Sun,
+    }
+}
+
+fn compare_position(body_id: usize, jd: f64, jpl: &JplEphemeris) -> Result<CompareResult, String> {
+    let calendar_date = jd_to_calendar_date(jd);
+    let celestial_body = body_id_to_celestial(body_id);
+
+    let delta_t = rust_ephemeris::internal::math_utils::calc_deltat(jd);
+    let jd_tt = jd + delta_t;
+
+    let simple_result = calculate_celestial_body(celestial_body, jd_tt, 0.0, 0.0, 0.0);
+    
+    let mut simple_lon = simple_result.eclon * RAD_TO_DEG;
+    while simple_lon < 0.0 { simple_lon += 360.0; }
+    while simple_lon >= 360.0 { simple_lon -= 360.0; }
+    
+    let simple_lat = simple_result.eclat * RAD_TO_DEG;
+    let simple_speed = simple_result.v_eclon * RAD_TO_DEG;
+    let simple_ra = simple_result.a_ra * RAD_TO_DEG;
+    let simple_dec = simple_result.a_dec * RAD_TO_DEG;
+
+    let (precise_lon, precise_lat, precise_speed, precise_ra, precise_dec) = match body_id {
+        10 => {
+            let moon_pos = jpl.lunar_position(jd_tt)?;
+            let mut lon = moon_pos.longitude_deg();
+            while lon < 0.0 { lon += 360.0; }
+            while lon >= 360.0 { lon -= 360.0; }
+            (lon, moon_pos.latitude.to_degrees(), moon_pos.longitude_speed_deg_day(), moon_pos.apparent_ra_deg(), moon_pos.apparent_dec_deg())
+        }
+        9 => {
+            let sun_pos = jpl.solar_position(jd_tt)?;
+            let mut lon = sun_pos.longitude_deg();
+            while lon < 0.0 { lon += 360.0; }
+            while lon >= 360.0 { lon -= 360.0; }
+            (lon, sun_pos.latitude.to_degrees(), sun_pos.longitude_speed_deg_day(), sun_pos.apparent_ra_deg(), sun_pos.apparent_dec_deg())
+        }
+        _ => {
+            use rust_ephemeris::internal::planet::Planet;
+            let planet = match body_id {
+                1 => Planet::Mercury,
+                2 => Planet::Venus,
+                3 => Planet::Mars,
+                4 => Planet::Jupiter,
+                5 => Planet::Saturn,
+                _ => return Err("不支持的天体".to_string()),
+            };
+            let planet_pos = jpl.planet_position(planet, jd_tt)?;
+            let mut lon = planet_pos.longitude_deg();
+            while lon < 0.0 { lon += 360.0; }
+            while lon >= 360.0 { lon -= 360.0; }
+            (lon, planet_pos.latitude.to_degrees(), planet_pos.longitude_speed_deg_day(), planet_pos.apparent_ra_deg(), planet_pos.apparent_dec_deg())
+        }
+    };
+
+    Ok(CompareResult {
+        calendar_date,
+        simple_lon,
+        precise_lon,
+        simple_lat,
+        precise_lat,
+        simple_speed,
+        precise_speed,
+        simple_ra,
+        precise_ra,
+        simple_dec,
+        precise_dec,
+    })
+}
+
+fn jd_to_calendar_date(jd: f64) -> String {
+    let (year, month, day_float) = JulianDate::jd2day(jd);
+    let day = day_float.floor() as i32;
+    let hour_float = (day_float - day as f64) * 24.0;
+    let hour = hour_float.floor() as i32;
+    let minute_float = (hour_float - hour as f64) * 60.0;
+    let minute = minute_float.floor() as i32;
+    let second = ((minute_float - minute as f64) * 60.0).round() as i32;
+    
+    format!("{:04}-{:02}-{:02} {:02}:{:02}:{:02}", year, month, day, hour, minute, second)
+}
+
+fn print_compare_usage() {
+    eprintln!("寿星天文历 - 对比模式");
+    eprintln!();
+    eprintln!("用法:");
+    eprintln!("  ephemeris-calc --compare [选项]");
+    eprintln!();
+    eprintln!("选项:");
+    eprintln!("  --output, -o <file>   输出 CSV 文件路径 (默认：comparison.csv)");
+    eprintln!("  --start-jd <jd>       起始儒略日 (默认：2451545.0 = J2000)");
+    eprintln!("  --days <n>            计算天数 (默认：365)");
+    eprintln!("  --step <n>            步长（天）(默认：1)");
+    eprintln!("  --body <id>           天体 ID (默认：10 = 月球)");
+    eprintln!("                        9=太阳，10=月球，1=水星，2=金星，3=火星，4=木星，5=土星");
+    eprintln!("  --help, -h            显示帮助信息");
+    eprintln!();
+    eprintln!("CSV 格式:");
+    eprintln!("  CalendarDate,SimpleLon,PreciseLon,SimpleLat,PreciseLat,SimpleSpeed,PreciseSpeed,SimpleRA,PreciseRA,SimpleDec,PreciseDec");
+    eprintln!();
+    eprintln!("示例:");
+    eprintln!("  # 对比月球在 J2000 附近 365 天的位置");
+    eprintln!("  ephemeris-calc --compare --output moon.csv --start-jd 2451545.0 --days 365");
+    eprintln!();
+    eprintln!("  # 对比太阳在 2000 年的位置（步长 10 天）");
+    eprintln!("  ephemeris-calc --compare --body 9 --step 10 --days 365");
+    eprintln!();
+    eprintln!("  # 对比远古时期月球（公元前 1000 年）");
+    eprintln!("  ephemeris-calc --compare --start-jd 1355804.5 --days 365 --body 10");
 }
