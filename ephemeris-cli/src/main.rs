@@ -399,53 +399,73 @@ fn run_compare_mode() {
                     output_file = args[i].clone();
                 }
             }
-            "--start" => {
+            "--start-year" => {
                 i += 1;
                 if i < args.len() {
                     start_year = args[i].parse().unwrap_or(2000);
                 }
+            }
+            "--start-month" => {
                 i += 1;
                 if i < args.len() {
                     start_month = args[i].parse().unwrap_or(1);
                 }
+            }
+            "--start-day" => {
                 i += 1;
                 if i < args.len() {
                     start_day = args[i].parse().unwrap_or(1);
                 }
+            }
+            "--start-hour" => {
                 i += 1;
                 if i < args.len() {
                     start_hour = args[i].parse().unwrap_or(12);
                 }
+            }
+            "--start-minute" => {
                 i += 1;
                 if i < args.len() {
                     start_minute = args[i].parse().unwrap_or(0);
                 }
+            }
+            "--start-second" => {
                 i += 1;
                 if i < args.len() {
                     start_second = args[i].parse().unwrap_or(0.0);
                 }
             }
-            "--end" => {
+            "--end-year" => {
                 i += 1;
                 if i < args.len() {
                     end_year = args[i].parse().unwrap_or(2000);
                 }
+            }
+            "--end-month" => {
                 i += 1;
                 if i < args.len() {
                     end_month = args[i].parse().unwrap_or(12);
                 }
+            }
+            "--end-day" => {
                 i += 1;
                 if i < args.len() {
                     end_day = args[i].parse().unwrap_or(31);
                 }
+            }
+            "--end-hour" => {
                 i += 1;
                 if i < args.len() {
                     end_hour = args[i].parse().unwrap_or(12);
                 }
+            }
+            "--end-minute" => {
                 i += 1;
                 if i < args.len() {
                     end_minute = args[i].parse().unwrap_or(0);
                 }
+            }
+            "--end-second" => {
                 i += 1;
                 if i < args.len() {
                     end_second = args[i].parse().unwrap_or(0.0);
@@ -679,27 +699,37 @@ fn print_compare_usage() {
     eprintln!("  ephemeris-calc --compare [选项]");
     eprintln!();
     eprintln!("选项:");
-    eprintln!("  --output, -o <file>   输出 CSV 文件路径 (默认：comparison.csv)");
-    eprintln!("  --start <y m d h m s> 起始时间 (默认：2000 1 1 12 0 0.0)");
-    eprintln!("  --end <y m d h m s>   结束时间 (默认：2000 12 31 12 0 0.0)");
-    eprintln!("  --step <days>         步长（天）(默认：1.0)");
-    eprintln!("  --body <id>           天体 ID (默认：10 = 月球)");
-    eprintln!("                        9=太阳，10=月球，1=水星，2=金星，3=火星，4=木星，5=土星");
-    eprintln!("  --help, -h            显示帮助信息");
+    eprintln!("  --output, -o <file>       输出 CSV 文件路径 (默认：comparison.csv)");
+    eprintln!("  --start-year <year>       起始年份 (默认：2000)");
+    eprintln!("  --start-month <month>     起始月份 (默认：1)");
+    eprintln!("  --start-day <day>         起始日期 (默认：1)");
+    eprintln!("  --start-hour <hour>       起始小时 (默认：12)");
+    eprintln!("  --start-minute <minute>   起始分钟 (默认：0)");
+    eprintln!("  --start-second <second>   起始秒数 (默认：0.0)");
+    eprintln!("  --end-year <year>         结束年份 (默认：2000)");
+    eprintln!("  --end-month <month>       结束月份 (默认：12)");
+    eprintln!("  --end-day <day>           结束日期 (默认：31)");
+    eprintln!("  --end-hour <hour>         结束小时 (默认：12)");
+    eprintln!("  --end-minute <minute>     结束分钟 (默认：0)");
+    eprintln!("  --end-second <second>     结束秒数 (默认：0.0)");
+    eprintln!("  --step <days>             步长（天）(默认：1.0)");
+    eprintln!("  --body <id>               天体 ID (默认：10 = 月球)");
+    eprintln!("                            9=太阳，10=月球，1=水星，2=金星，3=火星，4=木星，5=土星");
+    eprintln!("  --help, -h                显示帮助信息");
     eprintln!();
     eprintln!("CSV 格式:");
     eprintln!("  CalendarDate,SimpleLon,PreciseLon,SimpleLat,PreciseLat,SimpleSpeed,PreciseSpeed,SimpleRA,PreciseRA,SimpleDec,PreciseDec");
     eprintln!();
     eprintln!("示例:");
     eprintln!("  # 对比月球在 2000 年全年的位置（默认步长 1 天）");
-    eprintln!("  ephemeris-calc --compare --start 2000 1 1 12 0 0 --end 2000 12 31 12 0 0");
+    eprintln!("  ephemeris-calc --compare --start-year 2000 --start-month 1 --start-day 1 --end-year 2000 --end-month 12 --end-day 31");
     eprintln!();
     eprintln!("  # 对比太阳在 2000 年的位置（步长 10 天）");
-    eprintln!("  ephemeris-calc --compare --body 9 --step 10 --start 2000 1 1 12 0 0 --end 2000 12 31 12 0 0");
+    eprintln!("  ephemeris-calc --compare --body 9 --step 10 --start-year 2000 --end-year 2000");
     eprintln!();
     eprintln!("  # 对比远古时期月球（公元前 1000 年全年）");
-    eprintln!("  ephemeris-calc --compare --start -1000 1 1 12 0 0 --end -1000 12 31 12 0 0 --body 10");
+    eprintln!("  ephemeris-calc --compare --start-year -1000 --end-year -1000 --body 10");
     eprintln!();
     eprintln!("  # 对比月球在指定月份（步长 0.5 天 = 12 小时）");
-    eprintln!("  ephemeris-calc --compare --start 2024 1 1 0 0 0 --end 2024 1 31 23 59 59 --step 0.5");
+    eprintln!("  ephemeris-calc --compare --start-year 2024 --start-month 1 --end-month 1 --step 0.5");
 }
