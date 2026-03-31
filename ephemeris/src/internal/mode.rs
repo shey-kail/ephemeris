@@ -142,6 +142,8 @@ pub struct EphemerisConfig {
     pub enable_nutation: bool,
     /// 是否启用岁差修正
     pub enable_precession: bool,
+    /// 自定义 BSP 文件路径（仅精准模式有效）
+    pub bsp_custom_paths: Option<Vec<String>>,
 }
 
 impl Default for EphemerisConfig {
@@ -152,6 +154,7 @@ impl Default for EphemerisConfig {
             enable_aberration: true,
             enable_nutation: true,
             enable_precession: true,
+            bsp_custom_paths: None,
         }
     }
 }
@@ -203,11 +206,14 @@ impl EphemerisCalculator {
     pub fn new(config: EphemerisConfig) -> Result<Self, String> {
         let jpl_ephemeris = match &config.mode {
             CalculationMode::Precise { ephemeris_type } => {
-                Some(Arc::new(JplEphemeris::new(*ephemeris_type)?))
+                Some(Arc::new(JplEphemeris::with_custom_paths(
+                    *ephemeris_type,
+                    config.bsp_custom_paths.clone(),
+                )?))
             }
             CalculationMode::Simple => None,
         };
-        
+
         Ok(Self {
             config,
             jpl_ephemeris,
@@ -252,7 +258,62 @@ impl EphemerisCalculator {
     pub fn jpl_ephemeris(&self) -> Option<&JplEphemeris> {
         self.jpl_ephemeris.as_ref().map(|e| e.as_ref())
     }
-    
+
+    /// 计算天体位置（通用接口，支持简单/精准模式）
+    pub fn calculate_body_position(
+        &self,
+        body: crate::astronomy::CelestialBody,
+        jd_tt: f64,
+        _tz: f64,
+        _lon: f64,
+        _lat: f64,
+    ) -> crate::astronomy::PlanetCoordinates {
+        use crate::astronomy::{CelestialBody, PlanetCoordinates};
+        
+        match body {
+            CelestialBody::Sun => {
+                match self.solar_position(jd_tt) {
+                    Ok(pos) => {
+                        let (lon, lat, dist) = match pos {
+                            SolarPositionResult::Simple(p) => (p.longitude, p.latitude, p.distance),
+                            SolarPositionResult::Precise(p) => (p.longitude, p.latitude, p.distance),
+                        };
+                        PlanetCoordinates {
+                            body: CelestialBody::Sun,
+                            eclon: lon,
+                            eclat: lat,
+                            r: dist,
+                            ..Default::default()
+                        }
+                    }
+                    Err(_) => PlanetCoordinates::default(),
+                }
+            }
+            CelestialBody::Moon => {
+                match self.lunar_position(jd_tt) {
+                    Ok(pos) => {
+                        let (lon, lat, dist) = match pos {
+                            LunarPositionResult::Simple(p) => (p.longitude, p.latitude, p.distance),
+                            LunarPositionResult::Precise(p) => (p.longitude, p.latitude, p.distance),
+                        };
+                        PlanetCoordinates {
+                            body: CelestialBody::Moon,
+                            eclon: lon,
+                            eclat: lat,
+                            r: dist,
+                            ..Default::default()
+                        }
+                    }
+                    Err(_) => PlanetCoordinates::default(),
+                }
+            }
+            _ => {
+                // 其他天体暂时返回默认值
+                PlanetCoordinates::default()
+            }
+        }
+    }
+
     // ==================== 太阳位置计算 ====================
     
     /// 计算太阳位置

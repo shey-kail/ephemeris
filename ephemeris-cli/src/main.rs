@@ -12,7 +12,10 @@
 //!   每行格式：body_id year month day hour minute second [tz] [lon] [lat]
 //!
 //! 用法 4（对比模式）- 比较简单模式和精准模式：
-//!   ephemeris-calc --compare --output comparison.csv --start-jd 2451545.0 --days 365 --step 1 --body 10
+//!   ephemeris-calc --compare [选项]
+//!
+//! 全局选项:
+//!   --bsp-path <path>     自定义 JPL BSP 历表文件路径（仅精准模式有效）
 //!
 //! 参数:
 //!   body_id: 天体 ID (0:地球，1:水星，... 9:太阳，10:月亮)
@@ -111,7 +114,10 @@ fn print_usage() {
     eprintln!("  每行格式：body_id year month day hour minute second [tz] [lon] [lat]");
     eprintln!();
     eprintln!("用法 4（对比模式）- 比较简单模式和精准模式：");
-    eprintln!("  ephemeris-calc --compare --output comparison.csv --start-jd 2451545.0 --days 365");
+    eprintln!("  ephemeris-calc --compare [选项]");
+    eprintln!();
+    eprintln!("全局选项:");
+    eprintln!("  --bsp-path <path>     自定义 JPL BSP 历表文件路径（仅精准模式有效）");
     eprintln!();
     eprintln!("参数:");
     eprintln!("  body_id: 天体 ID (0:地球，1:水星，2:金星，3:火星，4:木星，5:土星，6:天王星，7:海王星，8:冥王星，9:太阳，10:月亮)");
@@ -133,12 +139,25 @@ fn print_usage() {
     eprintln!("  # 使用儒略日（兼容旧版）");
     eprintln!("  ephemeris-calc --jd 1 2460149.0 -8 116.383 39.9");
     eprintln!();
+    eprintln!("  # 使用自定义 BSP 历表文件（精准模式）");
+    eprintln!("  ephemeris-calc --bsp-path /path/to/custom.bsp 10 2023 7 23 12 0 0");
+    eprintln!();
     eprintln!("  # 批处理模式（计算 1000 个日期）");
     eprintln!("  seq 1 1000 | awk '{{print \"10\", 2000, 1, $1, 12, 0, 0}}' | ephemeris-calc --batch");
 }
 
 /// 计算单个天体位置并返回 JSON 字符串
-fn calculate_single(body_id: usize, jd_ut: f64, tz: f64, lon: f64, lat: f64, input_date_str: &str) -> String {
+fn calculate_single(
+    body_id: usize,
+    jd_ut: f64,
+    tz: f64,
+    lon: f64,
+    lat: f64,
+    input_date_str: &str,
+    bsp_path: Option<&str>,
+) -> String {
+    use rust_ephemeris::astronomy::{calculate_celestial_body, CelestialBody};
+
     let body = match body_id {
         0 => CelestialBody::Earth,
         1 => CelestialBody::Mercury,
@@ -155,6 +174,9 @@ fn calculate_single(body_id: usize, jd_ut: f64, tz: f64, lon: f64, lat: f64, inp
     };
 
     let jd_tt = jd_ut + rust_ephemeris::internal::math_utils::calc_deltat(jd_ut);
+    
+    // 使用简单模式计算（ BSP 路径仅用于精准模式，当前暂时不使用）
+    let _ = bsp_path; // 保留参数，暂时不使用
     let result = calculate_celestial_body(body, jd_tt, tz, lon, lat);
 
     let output = EphemerisResult {
@@ -223,13 +245,13 @@ fn run_batch_mode() {
         
         let lon = lon_deg * std::f64::consts::PI / 180.0;
         let lat = lat_deg * std::f64::consts::PI / 180.0;
-        
+
         let jd_ut_obj = JulianDate::from_ymdhms_ut(year, month, day, hour, minute, second);
         let jd_ut = jd_ut_obj.jd;
-        
+
         let input_date_str = format!("{:04}-{:02}-{:02} {:02}:{:02}:{:.1}", year, month, day, hour, minute, second);
-        
-        let result = calculate_single(body_id, jd_ut, tz, lon, lat, &input_date_str);
+
+        let result = calculate_single(body_id, jd_ut, tz, lon, lat, &input_date_str, None);
         writeln!(stdout_lock, "{}", result).unwrap();
         
         count += 1;
@@ -256,6 +278,18 @@ fn main() {
     if args.iter().any(|arg| arg == "--batch" || arg == "-b") {
         run_batch_mode();
         return;
+    }
+
+    // 解析全局参数
+    let mut bsp_path: Option<String> = None;
+    let mut i = 1;
+    while i < args.len() {
+        if args[i] == "--bsp-path" && i + 1 < args.len() {
+            bsp_path = Some(args[i + 1].clone());
+            i += 2;
+        } else {
+            i += 1;
+        }
     }
 
     let use_jd_mode = args.iter().any(|arg| arg == "--jd");

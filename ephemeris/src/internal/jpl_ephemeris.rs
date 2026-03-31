@@ -48,9 +48,38 @@ pub struct JplEphemeris {
 }
 
 impl JplEphemeris {
+    /// 创建 JPL 历表实例（使用默认路径）
     pub fn new(ephemeris_type: JplEphemerisType) -> Result<Self, String> {
+        Self::with_custom_paths(ephemeris_type, None)
+    }
+
+    /// 创建 JPL 历表实例（支持自定义 BSP 文件路径）
+    /// 
+    /// # Arguments
+    /// * `ephemeris_type` - 历表类型（DE431/DE441/DE441Lite）
+    /// * `custom_paths` - 可选的自定义 BSP 文件路径列表
+    /// 
+    /// # Example
+    /// ```
+    /// // 使用默认路径
+    /// let jpl = JplEphemeris::new(JplEphemerisType::DE441Lite)?;
+    /// 
+    /// // 使用自定义路径
+    /// let jpl = JplEphemeris::with_custom_paths(
+    ///     JplEphemerisType::DE441Lite,
+    ///     Some(vec!["/path/to/custom/de441.bsp".to_string()])
+    /// )?;
+    /// ```
+    pub fn with_custom_paths(
+        ephemeris_type: JplEphemerisType,
+        custom_paths: Option<Vec<String>>,
+    ) -> Result<Self, String> {
         let mut almanac = Almanac::default();
-        for path in ephemeris_type.file_paths() {
+        
+        // 使用自定义路径或默认路径
+        let paths = custom_paths.unwrap_or_else(|| ephemeris_type.file_paths());
+        
+        for path in paths {
             if !Path::new(&path).exists() {
                 return Err(format!("历表文件不存在：{}", path));
             }
