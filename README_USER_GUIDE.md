@@ -335,9 +335,415 @@ DE441 BSP 文件使用质心 NAIF ID：
    - 生成对比报告
 
 3. **性能优化**
-   - 缓存 BSP 文件加载
-   - 并行计算优化
-   - 减少内存占用
+
+#### 性能优化策略
+
+本项目采用**两层优化策略**加速 Moshier 算法的大规模批量计算：
+
+**层面 1：Moshier 算法内部优化（微优化）**
+
+目标：优化单个时间点的计算效率
+
+优化技术：
+- **霍纳法则**：减少多项式求值的乘法次数
+  ```rust
+  // 优化前：a0 + a1*t + a2*t² + a3*t³
+  // 优化后：a0 + t*(a1 + t*(a2 + t*a3))
+  ```
+- **公共子表达式消除**：复用 t², t³, t⁴ 的计算结果
+- **SIMD 指令集**：利用 CPU 向量指令一次处理 4-8 个数据
+- **查表法**：预计算常用角度的三角函数值
+
+预期收益：单点计算速度提升 **2x**
+
+---
+
+**层面 2：批量矩阵运算（宏优化）** ⭐
+
+目标：一次性批量计算 n 个时间点，适用于大规模计算场景
+
+核心思路：将时间序列组织成矩阵，使用 Faer 线性代数库进行矩阵运算
+
+```rust
+// 批量计算 API 示例
+pub fn m_coord_batch(t_values: &[f64]) -> (Vec<f64>, Vec<f64>, Vec<f64>) {
+    use faer::{Mat, mat};
+    
+    // 1. 将输入时间转换为 Faer 矩阵 (n×1 列向量)
+    let t = Mat::from_column_slice(t_values.len(), 1, t_values);
+    
+    // 2. 批量计算 t 的幂次 (逐元素运算，SIMD 加速)
+    let t2 = t.cwise_product(&t);
+    let t3 = t2.cwise_product(&t);
+    let t4 = t3.cwise_product(&t);
+    
+    // 3. 批量计算多项式部分 (矩阵标量乘法)
+    let poly = a0 + a1*&t + a2*&t2 + a3*&t3 + a4*&t4;
+    
+    // 4. 批量计算三角函数 (向量化)
+    let cos_args = phase + freq*&t;
+    let cos_vals = cos_args.cwise_map(|x| x.cos());
+    
+    // 5. 求和得到最终结果
+    let result = poly + amp * cos_vals;
+    
+    (result.as_slice().to_vec(), ...)
+}
+```
+
+优化技术：
+- **Faer 矩阵运算**：高性能 Rust 线性代数库
+- **多线程并行**：自动利用多核 CPU
+- **CPU 缓存优化**：连续内存访问模式
+- **内存预取**：减少缓存未命中
+
+预期收益：
+
+| 计算点数 | 无优化 | 两层优化 | 加速比 |
+|---------|--------|---------|--------|
+| 1,000 | 100ms | 5ms | **20x** |
+| 10,000 | 1000ms | 25ms | **40x** |
+| 100,000 | 10000ms | 150ms | **66x** |
+
+适用场景：
+- 对比模式大规模计算（如 10000 年逐日对比）
+- 历表生成（生成数百年的位置数据）
+- 蒙特卡洛模拟（需要数百万次计算）
+- 实时交互式应用（需要亚秒级响应）
+
+---
+
+### 精确模式（JPL DE441）优化策略
+
+精确模式的性能瓶颈与简单模式不同，主要开销在于 BSP 文件查找、Chebyshev 多项式求值和坐标转换。
+
+**瓶颈分析**：
+
+| 操作 | 耗时占比 | 说明 |
+|------|---------|------|
+| BSP 文件查找 | ~40% | Chebyshev 系数读取 |
+| Chebyshev 求值 | ~30% | 多项式计算 |
+| 坐标转换 | ~20% | 岁差、章动、光行差 |
+| 其他 | ~10% | 内存分配、类型转换 |
+
+---
+
+**方案 1：BSP 文件缓存优化**
+
+```rust
+// 缓存最近的区间索引，避免重复查找
+pub struct JplEphemeris {
+    almanac: Arc<Almanac>,
+    cached_interval: RwLock<Option<(Frame, f64, usize)>>,
+}
+
+fn compute_raw_position(&self, target: Frame, jd_tdb: f64) -> Result<...> {
+    // 检查缓存
+    if let Some((cached_frame, cached_jd, idx)) = *self.cached_interval.read() {
+        if cached_frame == target && (jd_tdb - cached_jd).abs() < 0.01 {
+            return self.evaluate_chebyshev_cached(idx, jd_tdb);
+        }
+    }
+    // 正常查找并更新缓存
+    let result = self.almanac.translate(...);
+    *self.cached_interval.write() = Some((target, jd_tdb, new_idx));
+    result
+}
+```
+
+预期收益：连续时间点计算加速 **2-3x**
+
+---
+
+**方案 2：Chebyshev 多项式批量求值**
+
+```rust
+// 批量计算 Chebyshev 多项式，使用矩阵运算
+pub fn evaluate_chebyshev_batch(
+    coefficients: &[f64],
+    t_values: &[f64],
+) -> Vec<f64> {
+    use faer::Mat;
+    
+    // 1. 构建 Chebyshev 基矩阵 T[0](t), T[1](t), ..., T[n](t)
+    let n = coefficients.len();
+    let mut basis = Mat::zeros(t_values.len(), n);
+    
+    for (i, &t) in t_values.iter().enumerate() {
+        basis[(i, 0)] = 1.0;
+        basis[(i, 1)] = t;
+        for j in 2..n {
+            basis[(i, j)] = 2.0 * t * basis[(i, j-1)] - basis[(i, j-2)];
+        }
+    }
+    
+    // 2. 矩阵 - 向量乘法
+    let coeffs_vec = Mat::from_column_slice(n, 1, coefficients);
+    let result = basis * coeffs_vec;
+    
+    result.as_slice().to_vec()
+}
+```
+
+预期收益：批量计算加速 **10-20x**
+
+---
+
+**方案 3：坐标转换缓存**
+
+```rust
+// 缓存岁差、章动矩阵，避免重复计算
+pub struct PrecessionCache {
+    cached_t: f64,
+    cached_matrix: Mat3,
+}
+
+impl PrecessionCache {
+    fn get_matrix(&mut self, t: f64) -> &Mat3 {
+        if (t - self.cached_t).abs() < 0.0001 {
+            &self.cached_matrix  // 复用缓存
+        } else {
+            self.cached_t = t;
+            self.cached_matrix = compute_precession_matrix(t);
+            &self.cached_matrix
+        }
+    }
+}
+```
+
+预期收益：坐标转换加速 **3-5x**
+
+---
+
+**方案 4：并行计算架构**
+
+```rust
+// 使用 Rayon 并行计算多个时间点
+use rayon::prelude::*;
+
+let results: Vec<_> = t_values.par_iter()
+    .map(|&t| {
+        thread_local_jpl().lunar_position(t)
+    })
+    .collect();
+```
+
+预期收益：多核 CPU 利用率提升 **4-8x**（取决于核心数）
+
+---
+
+**方案 5：Anise 库优化**
+
+```rust
+// 优化 Epoch 转换开销
+// 方案 A：缓存 Epoch
+struct CachedEpoch {
+    jd_tdb: f64,
+    epoch: Epoch,
+}
+
+// 方案 B：直接使用儒略日计算（需要 fork anise）
+fn translate_from_jd(&self, jd_tdb: f64) -> Result<...> {
+    // 绕过 Epoch 转换，直接使用 JD 计算
+}
+```
+
+预期收益：减少 **10-20%** overhead
+
+---
+
+**精确模式综合优化效果**：
+
+| 优化方案 | 单点计算 | 批量计算 (1000 点) |
+|---------|---------|------------------|
+| 无优化 | 10ms | 10000ms |
+| 方案 1+BSP 缓存 | 5ms (2x) | 5000ms (2x) |
+| 方案 2+Chebyshev 批量 | - | 500ms (20x) |
+| 方案 3+坐标缓存 | 3ms (3x) | 3000ms (3x) |
+| 方案 4+并行 | - | 100ms (100x) |
+| **全部优化** | **2ms (5x)** | **50ms (200x)** |
+
+**实施优先级**：
+1. **高优先级**（收益大，实现简单）：方案 1（BSP 缓存）、方案 4（并行计算）
+2. **中优先级**（收益中等）：方案 3（坐标转换缓存）
+3. **低优先级**（需要深入 anise 库）：方案 2（Chebyshev 批量）、方案 5（Anise 优化）
+
+---
+
+### 多步骤矫正融合优化
+
+本项目的天体位置计算需要多个矫正步骤，这些步骤可以融合到矩阵计算中进一步优化。
+
+**当前计算流程**（以行星视位置为例）：
+
+```rust
+// 当前：每个时间点独立计算所有 6 个步骤
+for &t in t_values {
+    let step1 = light_time_correction(t);      // 步骤 1：光时修正
+    let step2 = geo_coord(step1);               // 步骤 2：地心坐标转换
+    let step3 = gravitational_deflect(step2);   // 步骤 3：引力偏折
+    let step4 = aberration(step3);              // 步骤 4：光行差修正
+    let step5 = precession(step4);              // 步骤 5：岁差修正
+    let step6 = nutation(step5);                // 步骤 6：章动修正
+    result.push(step6);
+}
+```
+
+**问题**：
+- 每个步骤都创建临时向量，内存分配开销大
+- 无法利用步骤间的矩阵运算机会
+- CPU 缓存命中率低
+
+---
+
+**优化方案：端到端矩阵流水线**
+
+```rust
+// 优化后：批量计算，多步骤融合
+pub fn compute_apparent_position_batch(
+    t_values: &[f64],
+    body_positions: &[(f64, f64, f64)],
+) -> Vec<(f64, f64, f64, f64, f64, f64)> {
+    use faer::Mat;
+    
+    // ========== 步骤 1-2 融合：光时 + 地心坐标 ==========
+    let geo_xyz_batch: Mat<f64> = compute_geo_coords_batch(t_values, body_positions);
+    // geo_xyz_batch: n×3 矩阵 [x, y, z]
+    
+    // ========== 步骤 3：引力偏折（批量） ==========
+    let geo_deflected = gravitational_deflection_batch(geo_xyz_batch, t_values);
+    
+    // ========== 步骤 4：光行差（批量） ==========
+    let earth_vel_batch = compute_earth_velocity_batch(t_values);
+    let geo_aberrated = annual_aberration_batch(geo_deflected, earth_vel_batch);
+    
+    // ========== 步骤 5-6 融合：岁差 + 章动 ==========
+    // 关键优化：岁差和章动都是线性变换，可以合并为一个矩阵
+    let combined_matrix = nutation_matrix(t) * precession_matrix(t);
+    let combined_matrices = compute_combined_matrices_batch(t_values);
+    
+    // 批量应用变换：pos[i] = combined_matrix[i] * geo_aberrated[i]
+    let geo_nutated = apply_rotations_batch(combined_matrices, geo_aberrated);
+    
+    // ========== 步骤 7-8 融合：球坐标 + 黄赤转换 ==========
+    let epsilon_batch = compute_obliquity_batch(t_values);
+    let (ecl_lon, ecl_lat) = equatorial_to_ecliptic_batch(geo_nutated, epsilon_batch);
+    
+    collect_results(ecl_lon, ecl_lat, ...)
+}
+```
+
+---
+
+**关键融合点**：
+
+**融合点 1：岁差 + 章动矩阵合并**
+
+```rust
+// 当前：两个独立的矩阵乘法
+let pos_mean = precession_matrix(t) * pos;
+let pos_true = nutation_matrix(t) * pos_mean;
+
+// 优化：合并为一个矩阵
+let combined_matrix = nutation_matrix(t) * precession_matrix(t);
+let pos_true = combined_matrix * pos;
+
+// 批量版本
+let combined_matrices = compute_combined_matrices_batch(t_values);
+let pos_true_batch = apply_rotations_batch(combined_matrices, pos_batch);
+```
+
+预期收益：减少 **50%** 矩阵乘法
+
+---
+
+**融合点 2：光时 + 地心坐标**
+
+```rust
+// 当前：两次独立的坐标计算
+let body_retarded = light_time_correction(t);
+let geo = body_retarded - earth_pos;
+
+// 优化：直接计算地心向量
+let geo_batch = compute_geo_vector_batch(t_values, body_positions);
+// 内部使用矩阵运算，避免中间分配
+```
+
+预期收益：减少临时向量分配
+
+---
+
+**融合点 3：坐标转换流水线**
+
+```rust
+// 当前：多次坐标转换
+let xyz = llr2xyz(spherical);
+let llr = xyz2llr(xyz);
+
+// 优化：融合转换
+let result = llr2llr_direct(spherical, rotation_matrix);
+// 直接从球坐标到旋转后的球坐标
+```
+
+预期收益：避免 XYZ 中间格式
+
+---
+
+**完整优化架构**：
+
+```
+输入：时间向量 [t]，原始位置 [pos]
+         ↓
+    ┌─────────────────────────┐
+    │ 步骤 1-2 融合            │
+    │ 光时 + 地心坐标          │
+    │ (批量矩阵运算)           │
+    └─────────────────────────┘
+         ↓ 地心向量 [geo_xyz]
+    ┌─────────────────────────┐
+    │ 步骤 3：引力偏折          │
+    │ (批量向量化)             │
+    └─────────────────────────┘
+         ↓ 偏折后向量 [deflected]
+    ┌─────────────────────────┐
+    │ 步骤 4：光行差            │
+    │ (批量矩阵乘法)           │
+    └─────────────────────────┘
+         ↓ 光行差后向量 [aberrated]
+    ┌─────────────────────────┐
+    │ 步骤 5-6 融合            │
+    │ 岁差 + 章动矩阵合并       │
+    │ (单个 3×3 矩阵乘法)       │
+    └─────────────────────────┘
+         ↓ 真赤道坐标 [nutated]
+    ┌─────────────────────────┐
+    │ 步骤 7-8 融合            │
+    │ 球坐标 + 黄赤转换         │
+    │ (批量向量化三角函数)      │
+    └─────────────────────────┘
+         ↓
+输出：视位置 [(lon, lat, ra, dec, r)]
+```
+
+---
+
+**性能预期**：
+
+| 优化阶段 | 1000 点耗时 | 加速比 |
+|---------|-----------|--------|
+| 无优化（逐步骤逐个计算） | 1000ms | 1x |
+| 步骤内批量（当前方案） | 200ms | 5x |
+| **步骤融合 + 批量** | **50ms** | **20x** |
+| + 并行计算（8 核） | **10ms** | **100x** |
+
+---
+
+**实施计划**：
+
+1. [ ] 识别可融合的线性变换（岁差 + 章动）
+2. [ ] 实现批量坐标转换函数
+3. [ ] 创建端到端流水线 API
+4. [ ] 性能基准测试和调优
 
 ---
 
